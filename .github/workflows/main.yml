@@ -1,4 +1,0 @@
-- name: PyInstaller Windows
-  uses: vednig/pyinstaller-action-windows@main
-    with:
-      path: src
