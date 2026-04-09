@@ -1,10 +1,38 @@
 from __future__ import annotations
 
+import platform
 from datetime import datetime
 from decimal import Decimal, InvalidOperation
+from pathlib import Path
 from uuid import uuid4
 
 DATE_FMT = "%d/%m/%y"
+
+
+def get_data_dir() -> Path:
+    """获取平台特定的数据目录
+    
+    Linux: ~/文档/mbmanager_data/ 或 ~/Documents/mbmanager_data/ 或 ~/.mbmanager_data/ (备选)
+    Windows: ./mbmanager_data/
+    其他: ~/.mbmanager_data/
+    """
+    system = platform.system()
+    
+    if system == "Linux":
+        home = Path.home()
+        # 优先检查常见的 Documents 目录名（按优先级）
+        for docs_folder in ["文档", "Documents"]:
+            docs_dir = home / docs_folder
+            if docs_dir.exists():
+                return docs_dir / "mbmanager_data"
+        # 备选方案：~/.mbmanager_data/
+        return home / ".mbmanager_data"
+    elif system == "Windows":
+        # Windows 使用当前目录下的 mbmanager_data/
+        return Path.cwd() / "mbmanager_data"
+    else:
+        # 其他系统使用 ~/.mbmanager_data/
+        return Path.home() / ".mbmanager_data"
 
 
 def new_id() -> str:

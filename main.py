@@ -11,6 +11,7 @@ from betting_tab import BettingTab
 from casino_tab import CasinoTab
 from settings_about_tab import SettingsAboutTab
 from ui_settings import UiSettingsStore
+from utils import get_data_dir
 
 
 class MainWindow(QMainWindow):
@@ -18,7 +19,7 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.setWindowTitle("Matched Betting Manager")
         self.resize(1440, 860)
-        data_dir = Path(__file__).resolve().parent / "data"
+        data_dir = get_data_dir()
         tabs = QTabWidget(self)
         self.tabs = tabs
         betting_tab = BettingTab(data_dir, self)
@@ -61,7 +62,7 @@ def main() -> int:
     app = QApplication(sys.argv)
     
     # Apply font scaling
-    data_dir = Path(__file__).resolve().parent / "data"
+    data_dir = get_data_dir()
     settings_store = UiSettingsStore(data_dir)
     font_scale = settings_store.get_font_scale(100)
     
