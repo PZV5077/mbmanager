@@ -3,10 +3,12 @@ from __future__ import annotations
 from copy import deepcopy
 from functools import partial
 from pathlib import Path
+from typing import Any, Callable
 
 from PySide6.QtCore import QEvent, QTimer, Qt
 from PySide6.QtGui import QBrush, QColor, QKeySequence, QShortcut
 from PySide6.QtWidgets import (
+    QAbstractItemView,
     QCheckBox,
     QComboBox,
     QFrame,
@@ -34,7 +36,7 @@ FIELDS = [
     "qb1_type", "qb1_amount", "qb1_date", "qb1_settled",
     "has_qb2", "qb2_type", "qb2_amount", "qb2_date", "qb2_settled",
     "bonus_type", "bonus_amount", "bonus_date", "bonus_settled",
-    "final_amount", "bank_status", "notes",
+    "final_amount", "bank_status", "reload_instance_id", "notes",
 ]
 HEADERS = [
     "Status", "Bookie", "P.Start", "Promo", "Dep", "QB1 Type", "QB1 Amt", "QB1 Date",
@@ -57,8 +59,14 @@ QB2_DATA_FIELDS = ["qb2_type", "qb2_amount", "qb2_date"]
 
 
 class BettingTab(QWidget):
-    def __init__(self, data_dir: Path, parent: QWidget | None = None) -> None:
+    def __init__(
+        self,
+        data_dir: Path,
+        parent: QWidget | None = None,
+        on_records_changed: Callable[[], None] | None = None,
+    ) -> None:
         super().__init__(parent)
+        self.on_records_changed = on_records_changed
         self.store = CsvStore(data_dir / "betting.csv", FIELDS)
         self.ui_settings = UiSettingsStore(data_dir)
         self.records = self.store.load()
@@ -71,6 +79,8 @@ class BettingTab(QWidget):
         self.main_row_for_record_id: dict[str, int] = {}
         self.visible_record_ids: list[str] = []
         self.widget_map: dict[tuple[str, str], QWidget] = {}
+        self._copy_snapshot_ids: list[str] = []
+        self._delete_snapshot_ids: list[str] = []
         self._startup_focus_pending = True
         self._applying_col_widths = False
         self.col_widths = self.ui_settings.get_column_widths("betting", COL_WIDTHS, len(HEADERS))
@@ -109,8 +119,16 @@ class BettingTab(QWidget):
 
         self.add_btn = QPushButton("Add Record", self)
         self.add_btn.clicked.connect(self.add_record)
+        self.add_btn.setFocusPolicy(Qt.NoFocus)
+
+        self.copy_btn = QPushButton("Copy Selected", self)
+        self.copy_btn.clicked.connect(self.copy_selected)
+        self.copy_btn.setFocusPolicy(Qt.NoFocus)
+        self.copy_btn.pressed.connect(self._capture_copy_selection)
 
         self.delete_btn = QPushButton("Delete Selected", self)
+        self.delete_btn.setFocusPolicy(Qt.NoFocus)
+        self.delete_btn.pressed.connect(self._capture_delete_selection)
         self.delete_btn.clicked.connect(self.delete_selected)
 
         top = QHBoxLayout()
@@ -124,6 +142,7 @@ class BettingTab(QWidget):
         actions = QHBoxLayout()
         actions.addStretch(1)
         actions.addWidget(self.add_btn)
+        actions.addWidget(self.copy_btn)
         actions.addWidget(self.delete_btn)
 
         self.filter_panel = self._build_filter_panel()
@@ -134,7 +153,8 @@ class BettingTab(QWidget):
         self.table.setHorizontalHeaderLabels(HEADERS)
         self.table.verticalHeader().setVisible(False)
         self.table.setAlternatingRowColors(True)
-        self.table.setSelectionBehavior(QTableWidget.SelectRows)
+        self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
+        self.table.setSelectionMode(QAbstractItemView.ExtendedSelection)
         self.table.setEditTriggers(QTableWidget.NoEditTriggers)
         self.table.horizontalHeader().setSectionsMovable(False)
         self.table.horizontalHeader().setSectionResizeMode(QHeaderView.Interactive)
@@ -153,6 +173,8 @@ class BettingTab(QWidget):
 
     def _normalize_records(self) -> None:
         for rec in self.records:
+            if "reload_instance_id" not in rec:
+                rec["reload_instance_id"] = ""
             rec["status"] = compute_betting_status(rec)
         self._save_records()
 
@@ -207,8 +229,7 @@ class BettingTab(QWidget):
         self.redo_stack = self.redo_stack[-30:]
         self.records, self.active_record_id = self.undo_stack.pop()
         self._update_history_buttons()
-        self.schedule_save()
-        self.render_table()
+        self._commit_records_changed()
 
     def redo_last_change(self) -> None:
         if not self.redo_stack:
@@ -217,11 +238,19 @@ class BettingTab(QWidget):
         self.undo_stack = self.undo_stack[-30:]
         self.records, self.active_record_id = self.redo_stack.pop()
         self._update_history_buttons()
-        self.schedule_save()
-        self.render_table()
+        self._commit_records_changed()
 
     def schedule_save(self) -> None:
         self.save_timer.start()
+
+    def _notify_records_changed(self) -> None:
+        if callable(self.on_records_changed):
+            self.on_records_changed()
+
+    def _commit_records_changed(self) -> None:
+        self.schedule_save()
+        self.render_table()
+        self._notify_records_changed()
 
     def _save_records(self) -> None:
         for rec in self.records:
@@ -236,17 +265,16 @@ class BettingTab(QWidget):
 
     def add_record(self) -> None:
         self._push_undo()
-        today = today_str()
         rec = {
             "id": new_id(),
             "status": "NotStarted",
             "bookie": "",
-            "promo_start_date": today,
+            "promo_start_date": "",
             "promo_name": "",
             "deposit_amount": "",
             "qb1_type": "",
             "qb1_amount": "",
-            "qb1_date": today,
+            "qb1_date": "",
             "qb1_settled": "No",
             "has_qb2": "No",
             "qb2_type": "",
@@ -255,10 +283,11 @@ class BettingTab(QWidget):
             "qb2_settled": "No",
             "bonus_type": "",
             "bonus_amount": "",
-            "bonus_date": today,
+            "bonus_date": "",
             "bonus_settled": "No",
             "final_amount": "",
             "bank_status": "Unconfirmed",
+            "reload_instance_id": "",
             "notes": "",
         }
         rec["status"] = compute_betting_status(rec)
@@ -274,21 +303,190 @@ class BettingTab(QWidget):
             self.records.append(rec)
 
         self.active_record_id = rec["id"]
-        self.schedule_save()
-        self.render_table()
+        self._commit_records_changed()
 
     def delete_selected(self) -> None:
-        rid = self._current_record_id()
-        if not rid:
+        selected_ids = list(self._delete_snapshot_ids)
+        self._delete_snapshot_ids.clear()
+
+        selected_rows = set()
+        selection_model = self.table.selectionModel()
+        if selection_model is not None:
+            selected_rows = {idx.row() for idx in selection_model.selectedRows()}
+
+        if not selected_ids:
+            for row in sorted(selected_rows):
+                rid = self.row_to_record_id.get(row)
+                if rid and rid not in selected_ids:
+                    selected_ids.append(rid)
+
+        if not selected_ids:
+            rid = self._current_record_id()
+            if rid:
+                selected_ids = [rid]
+
+        if not selected_ids:
             QMessageBox.information(self, "Delete", "Select a record first.")
             return
-        if QMessageBox.question(self, "Delete", "Delete the selected record?") != QMessageBox.Yes:
+
+        count = len(selected_ids)
+        prompt = "Delete the selected record?" if count == 1 else f"Delete {count} selected records?"
+        if QMessageBox.question(self, "Delete", prompt) != QMessageBox.Yes:
             return
+
         self._push_undo()
-        self.records = [r for r in self.records if r["id"] != rid]
+        to_delete = set(selected_ids)
+        self.records = [r for r in self.records if r["id"] not in to_delete]
         self.active_record_id = None
-        self.schedule_save()
-        self.render_table()
+        self._commit_records_changed()
+
+    def copy_selected(self) -> None:
+        selected_ids = list(self._copy_snapshot_ids)
+        self._copy_snapshot_ids.clear()
+
+        selected_rows = set()
+        selection_model = self.table.selectionModel()
+        if selection_model is not None:
+            selected_rows = {idx.row() for idx in selection_model.selectedRows()}
+
+        if not selected_ids:
+            for row in sorted(selected_rows):
+                rid = self.row_to_record_id.get(row)
+                if rid and rid not in selected_ids:
+                    selected_ids.append(rid)
+
+        if not selected_ids:
+            rid = self._current_record_id()
+            if rid:
+                selected_ids = [rid]
+
+        if not selected_ids:
+            QMessageBox.information(self, "Copy", "Select a record first.")
+            return
+
+        self._push_undo()
+        copied_items: list[tuple[str, dict[str, str]]] = []
+        seen: set[str] = set()
+        for rid in selected_ids:
+            if rid in seen:
+                continue
+            seen.add(rid)
+            original = next((r for r in self.records if r["id"] == rid), None)
+            if original is None:
+                continue
+            copied = deepcopy(original)
+            copied["id"] = new_id()
+            copied["reload_instance_id"] = ""
+            copied["status"] = compute_betting_status(copied)
+            copied_items.append((rid, copied))
+
+        if not copied_items:
+            self.undo_stack.pop()
+            self._update_history_buttons()
+            return
+
+        inserted_ids: list[str] = []
+        for source_id, copied in copied_items:
+            insert_at = next((i for i, row in enumerate(self.records) if row.get("id") == source_id), None)
+            if insert_at is None:
+                self.records.append(copied)
+            else:
+                self.records.insert(insert_at + 1, copied)
+            inserted_ids.append(copied["id"])
+
+        self.active_record_id = inserted_ids[-1]
+        self._commit_records_changed()
+
+    def get_reload_instance_status(self, instance_id: str) -> str | None:
+        record = next((rec for rec in self.records if rec.get("reload_instance_id", "") == instance_id), None)
+        if record is None:
+            return None
+        record["status"] = compute_betting_status(record)
+        return record["status"]
+
+    def ensure_record_for_reload_instance(self, instance: dict[str, Any]) -> bool:
+        instance_id = str(instance.get("id", "") or "")
+        if not instance_id:
+            return False
+
+        existing = next((rec for rec in self.records if rec.get("reload_instance_id", "") == instance_id), None)
+        if existing is not None:
+            self.active_record_id = existing["id"]
+            self.render_table()
+            self._notify_records_changed()
+            return False
+
+        values = instance.get("values") if isinstance(instance.get("values"), dict) else {}
+        has_qb2 = "Yes" if str(values.get("has_qb2", "No")) == "Yes" else "No"
+        qb2_amount = str(values.get("qb2_amount", "") or "") if has_qb2 == "Yes" else ""
+
+        self._push_undo()
+        rec = {
+            "id": new_id(),
+            "status": "NotStarted",
+            "bookie": str(values.get("bookie", "") or ""),
+            "promo_start_date": "",
+            "promo_name": str(values.get("promo_name", "") or ""),
+            "deposit_amount": str(values.get("deposit_amount", "") or ""),
+            "qb1_type": str(values.get("qb1_type", "") or ""),
+            "qb1_amount": str(values.get("qb1_amount", "") or ""),
+            "qb1_date": "",
+            "qb1_settled": "No",
+            "has_qb2": has_qb2,
+            "qb2_type": str(values.get("qb2_type", "") or "") if has_qb2 == "Yes" else "",
+            "qb2_amount": qb2_amount,
+            "qb2_date": "",
+            "qb2_settled": "No",
+            "bonus_type": str(values.get("bonus_type", "") or ""),
+            "bonus_amount": str(values.get("bonus_amount", "") or ""),
+            "bonus_date": "",
+            "bonus_settled": "No",
+            "final_amount": "",
+            "bank_status": "Unconfirmed",
+            "reload_instance_id": instance_id,
+            "notes": "",
+        }
+        rec["status"] = compute_betting_status(rec)
+
+        current_id = self._current_record_id()
+        if current_id:
+            insert_at = next((i for i, row in enumerate(self.records) if row.get("id") == current_id), None)
+            if insert_at is None:
+                self.records.append(rec)
+            else:
+                self.records.insert(insert_at + 1, rec)
+        else:
+            self.records.append(rec)
+
+        self.active_record_id = rec["id"]
+        self._commit_records_changed()
+        return True
+
+    def _capture_delete_selection(self) -> None:
+        selected_rows = set()
+        selection_model = self.table.selectionModel()
+        if selection_model is not None:
+            selected_rows = {idx.row() for idx in selection_model.selectedRows()}
+
+        selected_ids: list[str] = []
+        for row in sorted(selected_rows):
+            rid = self.row_to_record_id.get(row)
+            if rid and rid not in selected_ids:
+                selected_ids.append(rid)
+        self._delete_snapshot_ids = selected_ids
+
+    def _capture_copy_selection(self) -> None:
+        selected_rows = set()
+        selection_model = self.table.selectionModel()
+        if selection_model is not None:
+            selected_rows = {idx.row() for idx in selection_model.selectedRows()}
+
+        selected_ids: list[str] = []
+        for row in sorted(selected_rows):
+            rid = self.row_to_record_id.get(row)
+            if rid and rid not in selected_ids:
+                selected_ids.append(rid)
+        self._copy_snapshot_ids = selected_ids
 
     def _current_record_id(self) -> str | None:
         row = self.table.currentRow()
@@ -655,5 +853,4 @@ class BettingTab(QWidget):
             rec["qb2_settled"] = "No"
         rec["status"] = compute_betting_status(rec)
         self.active_record_id = record_id
-        self.schedule_save()
-        self.render_table()
+        self._commit_records_changed()

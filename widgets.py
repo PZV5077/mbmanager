@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from PySide6.QtCore import QDate, Signal
+from PySide6.QtCore import QDate, QEvent, Signal
 from PySide6.QtWidgets import QDateEdit, QHBoxLayout, QToolButton, QWidget
 
 from utils import parse_date
@@ -17,9 +17,13 @@ class NullableDateWidget(QWidget):
         self.edit = QDateEdit(self)
         self.edit.setCalendarPopup(True)
         self.edit.setDisplayFormat("dd/MM/yy")
-        self.edit.setSpecialValueText("")
+        # Qt may render minimum date when special text is truly empty.
+        # Use a single space so empty values stay visually blank.
+        self.edit.setSpecialValueText(" ")
         self.edit.setMinimumDate(self._min)
         self.edit.setDate(self._min)
+        self._calendar = self.edit.calendarWidget()
+        self._calendar.installEventFilter(self)
 
         self.clear_btn = QToolButton(self)
         self.clear_btn.setText("x")
@@ -60,3 +64,10 @@ class NullableDateWidget(QWidget):
     def _emit(self) -> None:
         if not self._updating:
             self.textChanged.emit(self.text())
+
+    def eventFilter(self, obj: object, event: QEvent) -> bool:
+        if obj is self._calendar and event.type() == QEvent.Type.Show and self.edit.date() == self._min:
+            today = QDate.currentDate()
+            self._calendar.setCurrentPage(today.year(), today.month())
+            self._calendar.setSelectedDate(today)
+        return super().eventFilter(obj, event)

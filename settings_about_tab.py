@@ -15,6 +15,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from reload_offer_store import ReloadOfferStore
 from ui_settings import UiSettingsStore
 
 
@@ -69,11 +70,15 @@ class SettingsAboutTab(QWidget):
         delete_db_btn.setStyleSheet(danger_style)
         delete_db_btn.clicked.connect(self._delete_database)
 
+        delete_templates_btn = QPushButton("Delete All Offer Templates", self)
+        delete_templates_btn.setStyleSheet(danger_style)
+        delete_templates_btn.clicked.connect(self._delete_all_offer_templates)
+
         delete_all_btn = QPushButton("Delete Database + Settings", self)
         delete_all_btn.setStyleSheet(danger_style)
         delete_all_btn.clicked.connect(self._delete_database_and_settings)
 
-        for btn in (delete_db_btn, delete_all_btn):
+        for btn in (delete_db_btn, delete_templates_btn, delete_all_btn):
             char_width = btn.fontMetrics().horizontalAdvance('M')
             btn.setFixedWidth(btn.fontMetrics().horizontalAdvance(btn.text()) + char_width * 4)
 
@@ -81,6 +86,7 @@ class SettingsAboutTab(QWidget):
         actions.setContentsMargins(0, 0, 0, 0)
         actions.setSpacing(10)
         actions.addWidget(delete_db_btn)
+        actions.addWidget(delete_templates_btn)
         actions.addWidget(delete_all_btn)
         actions.addStretch(1)
 
@@ -126,15 +132,17 @@ class SettingsAboutTab(QWidget):
                 "Delete Completed (with failures)",
                 f"Deleted {deleted} file(s).\nFailed: {', '.join(failed)}",
             )
+            self._request_workspace_refresh()
             return
 
         QMessageBox.information(self, "Delete Completed", f"Deleted {deleted} file(s).")
+        self._request_workspace_refresh()
 
     def _delete_database_and_settings(self) -> None:
         reply = QMessageBox.warning(
             self,
             "Dangerous Action",
-            "This will delete all CSV data files and ui_settings.json under data/.\nThis action cannot be undone. Continue?",
+            "This will delete all CSV data files, ui_settings.json, and offer template config under data/.\nThis action cannot be undone. Continue?",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             QMessageBox.StandardButton.No,
         )
@@ -158,15 +166,46 @@ class SettingsAboutTab(QWidget):
         except OSError:
             failed.append(settings_file.name)
 
+        offer_templates_file = ReloadOfferStore(self.data_dir).path
+        try:
+            offer_templates_file.unlink(missing_ok=True)
+            deleted += 1
+        except OSError:
+            failed.append(offer_templates_file.name)
+
         if failed:
             QMessageBox.warning(
                 self,
                 "Delete Completed (with failures)",
                 f"Deleted {deleted} file(s).\nFailed: {', '.join(failed)}",
             )
+            self._request_workspace_refresh()
             return
 
         QMessageBox.information(self, "Delete Completed", f"Deleted {deleted} file(s).")
+        self._request_workspace_refresh()
+
+    def _delete_all_offer_templates(self) -> None:
+        reply = QMessageBox.warning(
+            self,
+            "Dangerous Action",
+            "This will delete all offer template config (reload_offers.json).\nThis action cannot be undone. Continue?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+
+        templates_file = ReloadOfferStore(self.data_dir).path
+        try:
+            templates_file.unlink(missing_ok=True)
+        except OSError as exc:
+            QMessageBox.warning(self, "Delete Failed", f"Failed to delete {templates_file.name}:\n{exc}")
+            self._request_workspace_refresh()
+            return
+
+        QMessageBox.information(self, "Delete Completed", "Offer template config deleted.")
+        self._request_workspace_refresh()
 
     def _on_font_scale_changed(self, value: int) -> None:
         self.settings.set_font_scale(value)
@@ -180,3 +219,9 @@ class SettingsAboutTab(QWidget):
                 scaled_size = int(base_size * value / 100)
                 default_font.setPointSize(scaled_size)
                 app.setFont(default_font)
+
+    def _request_workspace_refresh(self) -> None:
+        window = self.window()
+        refresh = getattr(window, "refresh_workspace", None)
+        if callable(refresh):
+            refresh()

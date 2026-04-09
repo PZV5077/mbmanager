@@ -7,6 +7,7 @@ from pathlib import Path
 from PySide6.QtCore import QEvent, QTimer, Qt
 from PySide6.QtGui import QBrush, QColor, QKeySequence, QShortcut
 from PySide6.QtWidgets import (
+    QAbstractItemView,
     QComboBox,
     QFrame,
     QGridLayout,
@@ -25,7 +26,7 @@ from PySide6.QtWidgets import (
 
 from storage import CsvStore
 from ui_settings import UiSettingsStore
-from utils import CASINO_STATUS_ORDER, compute_casino_profit, compute_casino_status, new_id, parse_date, parse_decimal, status_color, today_str
+from utils import CASINO_STATUS_ORDER, compute_casino_profit, compute_casino_status, new_id, parse_date, parse_decimal, status_color
 from widgets import NullableDateWidget
 
 FIELDS = ["id", "status", "bookie", "promo_start_date", "promo_name", "deposit_amount", "final_amount", "bank_status", "profit", "notes"]
@@ -50,6 +51,8 @@ class CasinoTab(QWidget):
         self.row_to_record_id: dict[int, str] = {}
         self.visible_record_ids: list[str] = []
         self.widget_map: dict[tuple[str, str], QWidget] = {}
+        self._copy_snapshot_ids: list[str] = []
+        self._delete_snapshot_ids: list[str] = []
         self._startup_focus_pending = True
         self._applying_col_widths = False
         self.col_widths = self.ui_settings.get_column_widths("casino", COL_WIDTHS, len(HEADERS))
@@ -88,8 +91,16 @@ class CasinoTab(QWidget):
 
         self.add_btn = QPushButton("Add Record", self)
         self.add_btn.clicked.connect(self.add_record)
+        self.add_btn.setFocusPolicy(Qt.NoFocus)
+
+        self.copy_btn = QPushButton("Copy Selected", self)
+        self.copy_btn.clicked.connect(self.copy_selected)
+        self.copy_btn.setFocusPolicy(Qt.NoFocus)
+        self.copy_btn.pressed.connect(self._capture_copy_selection)
 
         self.delete_btn = QPushButton("Delete Selected", self)
+        self.delete_btn.setFocusPolicy(Qt.NoFocus)
+        self.delete_btn.pressed.connect(self._capture_delete_selection)
         self.delete_btn.clicked.connect(self.delete_selected)
 
         top = QHBoxLayout()
@@ -103,6 +114,7 @@ class CasinoTab(QWidget):
         actions = QHBoxLayout()
         actions.addStretch(1)
         actions.addWidget(self.add_btn)
+        actions.addWidget(self.copy_btn)
         actions.addWidget(self.delete_btn)
 
         self.filter_panel = self._build_filter_panel()
@@ -113,7 +125,8 @@ class CasinoTab(QWidget):
         self.table.setHorizontalHeaderLabels(HEADERS)
         self.table.verticalHeader().setVisible(False)
         self.table.setAlternatingRowColors(True)
-        self.table.setSelectionBehavior(QTableWidget.SelectRows)
+        self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
+        self.table.setSelectionMode(QAbstractItemView.ExtendedSelection)
         self.table.setEditTriggers(QTableWidget.NoEditTriggers)
         self.table.horizontalHeader().setSectionsMovable(False)
         self.table.horizontalHeader().setSectionResizeMode(QHeaderView.Interactive)
@@ -212,7 +225,7 @@ class CasinoTab(QWidget):
             "id": new_id(),
             "status": "NotStarted",
             "bookie": "",
-            "promo_start_date": today_str(),
+            "promo_start_date": "",
             "promo_name": "",
             "deposit_amount": "",
             "final_amount": "",
@@ -236,17 +249,124 @@ class CasinoTab(QWidget):
         self.render_table()
 
     def delete_selected(self) -> None:
-        rid = self._current_record_id()
-        if not rid:
+        selected_ids = list(self._delete_snapshot_ids)
+        self._delete_snapshot_ids.clear()
+
+        selected_rows = set()
+        selection_model = self.table.selectionModel()
+        if selection_model is not None:
+            selected_rows = {idx.row() for idx in selection_model.selectedRows()}
+
+        if not selected_ids:
+            selected_ids = [
+                rid
+                for row in sorted(selected_rows)
+                if (rid := self.row_to_record_id.get(row)) is not None
+            ]
+
+        if not selected_ids:
+            rid = self._current_record_id()
+            if rid:
+                selected_ids = [rid]
+
+        if not selected_ids:
             QMessageBox.information(self, "Delete", "Select a record first.")
             return
-        if QMessageBox.question(self, "Delete", "Delete the selected record?") != QMessageBox.Yes:
+
+        count = len(selected_ids)
+        prompt = "Delete the selected record?" if count == 1 else f"Delete {count} selected records?"
+        if QMessageBox.question(self, "Delete", prompt) != QMessageBox.Yes:
             return
+
         self._push_undo()
-        self.records = [r for r in self.records if r["id"] != rid]
+        to_delete = set(selected_ids)
+        self.records = [r for r in self.records if r["id"] not in to_delete]
         self.active_record_id = None
         self.schedule_save()
         self.render_table()
+
+    def copy_selected(self) -> None:
+        selected_ids = list(self._copy_snapshot_ids)
+        self._copy_snapshot_ids.clear()
+
+        selected_rows = set()
+        selection_model = self.table.selectionModel()
+        if selection_model is not None:
+            selected_rows = {idx.row() for idx in selection_model.selectedRows()}
+
+        if not selected_ids:
+            selected_ids = [
+                rid
+                for row in sorted(selected_rows)
+                if (rid := self.row_to_record_id.get(row)) is not None
+            ]
+
+        if not selected_ids:
+            rid = self._current_record_id()
+            if rid:
+                selected_ids = [rid]
+
+        if not selected_ids:
+            QMessageBox.information(self, "Copy", "Select a record first.")
+            return
+
+        self._push_undo()
+        copied_items: list[tuple[str, dict[str, str]]] = []
+        seen: set[str] = set()
+        for rid in selected_ids:
+            if rid in seen:
+                continue
+            seen.add(rid)
+            original = next((r for r in self.records if r["id"] == rid), None)
+            if original is None:
+                continue
+            copied = deepcopy(original)
+            copied["id"] = new_id()
+            copied["profit"] = compute_casino_profit(copied)
+            copied["status"] = compute_casino_status(copied)
+            copied_items.append((rid, copied))
+
+        if not copied_items:
+            self.undo_stack.pop()
+            self._update_history_buttons()
+            return
+
+        inserted_ids: list[str] = []
+        for source_id, copied in copied_items:
+            insert_at = next((i for i, row in enumerate(self.records) if row.get("id") == source_id), None)
+            if insert_at is None:
+                self.records.append(copied)
+            else:
+                self.records.insert(insert_at + 1, copied)
+            inserted_ids.append(copied["id"])
+
+        self.active_record_id = inserted_ids[-1]
+        self.schedule_save()
+        self.render_table()
+
+    def _capture_delete_selection(self) -> None:
+        selected_rows = set()
+        selection_model = self.table.selectionModel()
+        if selection_model is not None:
+            selected_rows = {idx.row() for idx in selection_model.selectedRows()}
+
+        self._delete_snapshot_ids = [
+            rid
+            for row in sorted(selected_rows)
+            if (rid := self.row_to_record_id.get(row)) is not None
+        ]
+
+    def _capture_copy_selection(self) -> None:
+        selected_rows = set()
+        selection_model = self.table.selectionModel()
+        if selection_model is not None:
+            selected_rows = {idx.row() for idx in selection_model.selectedRows()}
+
+        self._copy_snapshot_ids = [
+            rid
+            for row in sorted(selected_rows)
+            if (rid := self.row_to_record_id.get(row)) is not None
+        ]
 
     def _current_record_id(self) -> str | None:
         row = self.table.currentRow()
