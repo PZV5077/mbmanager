@@ -54,8 +54,7 @@ jobs:
           pip install -r requirements.txt
           pip install pyinstaller
           sudo apt-get update
-          sudo apt-get install -y ruby ruby-dev build-essential
-          sudo gem install fpm
+          sudo apt-get install -y dpkg-dev
       
       - name: Build executable
         run: |
@@ -63,8 +62,23 @@ jobs:
       
       - name: Create DEB package
         run: |
-          mkdir -p build/usr/bin build/usr/share/applications
+          RAW_VERSION="${GITHUB_REF#refs/tags/}"
+          VERSION="${RAW_VERSION#v}"
+          VERSION="${VERSION//[^0-9A-Za-z.+~-]/-}"
+
+          mkdir -p build/DEBIAN build/usr/bin build/usr/share/applications dist
           cp dist/matched-betting-manager build/usr/bin/
+          chmod 755 build/usr/bin/matched-betting-manager
+
+          cat > build/DEBIAN/control << EOF
+          Package: matched-betting-manager
+          Version: ${VERSION}
+          Section: utils
+          Priority: optional
+          Architecture: amd64
+          Maintainer: $(git log -1 --pretty=%an)
+          Description: A local PySide6 desktop app for matched betting management
+          EOF
           
           # Create desktop entry
           cat > build/usr/share/applications/matched-betting-manager.desktop << 'EOF'
@@ -76,19 +90,12 @@ jobs:
           Categories=Application;Finance;
           Terminal=false
           EOF
-          
-          fpm -s dir -t deb \
-            -n matched-betting-manager \
-            -v ${GITHUB_REF#refs/tags/} \
-            -C build \
-            --maintainer "$(git log -1 --pretty=%an)" \
-            --description "A local PySide6 desktop app for matched betting management" \
-            -a x86_64 \
-            .
+
+          dpkg-deb --build build "dist/matched-betting-manager_${VERSION}_amd64.deb"
       
       - name: Upload DEB to release
         uses: softprops/action-gh-release@v1
         with:
-          files: matched-betting-manager*.deb
+          files: dist/matched-betting-manager*_amd64.deb
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
