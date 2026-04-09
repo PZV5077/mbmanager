@@ -1,4 +1,4 @@
-# Matched Betting Manager v2
+# Matched Betting Manager v1
 
 A local PySide6 desktop app with two tabs:
 
