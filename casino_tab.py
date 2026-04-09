@@ -24,12 +24,13 @@ from PySide6.QtWidgets import (
 )
 
 from storage import CsvStore
+from ui_settings import UiSettingsStore
 from utils import CASINO_STATUS_ORDER, compute_casino_profit, compute_casino_status, new_id, parse_date, parse_decimal, status_color, today_str
 from widgets import NullableDateWidget
 
 FIELDS = ["id", "status", "bookie", "promo_start_date", "promo_name", "deposit_amount", "final_amount", "bank_status", "profit", "notes"]
 HEADERS = ["Status", "Bookie", "P.Start", "Promo", "Dep", "Final", "Bank", "P/L", "Notes"]
-COL_WIDTHS = [105, 105, 82, 125, 72, 78, 95, 72, 145]
+COL_WIDTHS = [105, 105, 132, 125, 72, 78, 95, 72, 145]
 BANK = ["Unconfirmed", "Received", "Issue"]
 STATUS_FILTERS = ["NotStarted", "NeedDeposit", "NeedFinal", "WaitBank", "Done", "Error"]
 NAV_FIELDS = ["bookie", "promo_start_date", "promo_name", "deposit_amount", "final_amount", "bank_status", "notes"]
@@ -39,15 +40,19 @@ class CasinoTab(QWidget):
     def __init__(self, data_dir: Path, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.store = CsvStore(data_dir / "casino.csv", FIELDS)
+        self.ui_settings = UiSettingsStore(data_dir)
         self.records = self.store.load()
         self.active_record_id: str | None = None
         self.sort_field = "promo_start_date"
         self.sort_ascending = True
         self.undo_stack: list[tuple[list[dict[str, str]], str | None]] = []
+        self.redo_stack: list[tuple[list[dict[str, str]], str | None]] = []
         self.row_to_record_id: dict[int, str] = {}
         self.visible_record_ids: list[str] = []
         self.widget_map: dict[tuple[str, str], QWidget] = {}
         self._startup_focus_pending = True
+        self._applying_col_widths = False
+        self.col_widths = self.ui_settings.get_column_widths("casino", COL_WIDTHS, len(HEADERS))
 
         self._normalize_records()
 
@@ -55,6 +60,11 @@ class CasinoTab(QWidget):
         self.save_timer.setSingleShot(True)
         self.save_timer.setInterval(700)
         self.save_timer.timeout.connect(self._save_records)
+
+        self.settings_timer = QTimer(self)
+        self.settings_timer.setSingleShot(True)
+        self.settings_timer.setInterval(300)
+        self.settings_timer.timeout.connect(self._save_column_widths)
 
         self.search_edit = QLineEdit(self)
         self.search_edit.setPlaceholderText("Search Bookie or Promo")
@@ -72,6 +82,10 @@ class CasinoTab(QWidget):
         self.undo_btn.clicked.connect(self.undo_last_change)
         self.undo_btn.setEnabled(False)
 
+        self.redo_btn = QPushButton("Redo", self)
+        self.redo_btn.clicked.connect(self.redo_last_change)
+        self.redo_btn.setEnabled(False)
+
         self.add_btn = QPushButton("Add Record", self)
         self.add_btn.clicked.connect(self.add_record)
 
@@ -84,8 +98,12 @@ class CasinoTab(QWidget):
         top.addWidget(self.filter_toggle)
         top.addWidget(self.clear_filters_btn)
         top.addWidget(self.undo_btn)
-        top.addWidget(self.add_btn)
-        top.addWidget(self.delete_btn)
+        top.addWidget(self.redo_btn)
+
+        actions = QHBoxLayout()
+        actions.addStretch(1)
+        actions.addWidget(self.add_btn)
+        actions.addWidget(self.delete_btn)
 
         self.filter_panel = self._build_filter_panel()
         self.filter_panel.setVisible(False)
@@ -100,27 +118,22 @@ class CasinoTab(QWidget):
         self.table.horizontalHeader().setSectionsMovable(False)
         self.table.horizontalHeader().setSectionResizeMode(QHeaderView.Interactive)
         self.table.horizontalHeader().sectionClicked.connect(self.sort_by_column)
+        self.table.horizontalHeader().sectionResized.connect(self._on_section_resized)
 
         lay = QVBoxLayout(self)
         lay.addLayout(top)
+        lay.addLayout(actions)
         lay.addWidget(self.filter_panel)
         lay.addWidget(self.table, 1)
 
         QShortcut(QKeySequence.Undo, self, activated=self.undo_last_change)
+        QShortcut(QKeySequence.Redo, self, activated=self.redo_last_change)
         self.render_table()
 
     def _normalize_records(self) -> None:
-        out = []
-        for raw in self.records:
-            rec = {field: (raw.get(field, "") or "") for field in FIELDS}
-            if not rec["id"]:
-                rec["id"] = new_id()
-            if rec["bank_status"] not in BANK:
-                rec["bank_status"] = "Unconfirmed"
+        for rec in self.records:
             rec["profit"] = compute_casino_profit(rec)
             rec["status"] = compute_casino_status(rec)
-            out.append(rec)
-        self.records = out
         self._save_records()
 
     def _build_filter_panel(self) -> QWidget:
@@ -151,13 +164,30 @@ class CasinoTab(QWidget):
     def _push_undo(self) -> None:
         self.undo_stack.append((deepcopy(self.records), self.active_record_id))
         self.undo_stack = self.undo_stack[-30:]
-        self.undo_btn.setEnabled(True)
+        self.redo_stack.clear()
+        self._update_history_buttons()
+
+    def _update_history_buttons(self) -> None:
+        self.undo_btn.setEnabled(bool(self.undo_stack))
+        self.redo_btn.setEnabled(bool(self.redo_stack))
 
     def undo_last_change(self) -> None:
         if not self.undo_stack:
             return
+        self.redo_stack.append((deepcopy(self.records), self.active_record_id))
+        self.redo_stack = self.redo_stack[-30:]
         self.records, self.active_record_id = self.undo_stack.pop()
-        self.undo_btn.setEnabled(bool(self.undo_stack))
+        self._update_history_buttons()
+        self.schedule_save()
+        self.render_table()
+
+    def redo_last_change(self) -> None:
+        if not self.redo_stack:
+            return
+        self.undo_stack.append((deepcopy(self.records), self.active_record_id))
+        self.undo_stack = self.undo_stack[-30:]
+        self.records, self.active_record_id = self.redo_stack.pop()
+        self._update_history_buttons()
         self.schedule_save()
         self.render_table()
 
@@ -275,11 +305,28 @@ class CasinoTab(QWidget):
         for row, rec in enumerate(visible):
             self.row_to_record_id[row] = rec["id"]
             self._render_row(row, rec)
-        for i, w in enumerate(COL_WIDTHS):
-            self.table.setColumnWidth(i, w)
+        self._applying_col_widths = True
+        try:
+            for i, w in enumerate(self.col_widths):
+                self.table.setColumnWidth(i, w)
+        finally:
+            self._applying_col_widths = False
         self.table.horizontalHeader().setStretchLastSection(False)
         self.table.setUpdatesEnabled(True)
         self._restore_selection()
+
+    def _on_section_resized(self, index: int, _old_size: int, new_size: int) -> None:
+        if self._applying_col_widths:
+            return
+        if not 0 <= index < len(self.col_widths):
+            return
+        if new_size <= 0:
+            return
+        self.col_widths[index] = new_size
+        self.settings_timer.start()
+
+    def _save_column_widths(self) -> None:
+        self.ui_settings.set_column_widths("casino", self.col_widths)
 
     def _restore_selection(self) -> None:
         target_row: int | None = None
@@ -308,6 +355,7 @@ class CasinoTab(QWidget):
     def _render_row(self, row: int, rec: dict[str, str]) -> None:
         item = QTableWidgetItem(rec["status"])
         item.setFlags(Qt.ItemIsEnabled | Qt.ItemIsSelectable)
+        item.setTextAlignment(Qt.AlignCenter)
         item.setBackground(QBrush(QColor(status_color(rec["status"]))))
         item.setForeground(QBrush(QColor("white")))
         self.table.setItem(row, 0, item)

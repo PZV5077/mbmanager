@@ -16,7 +16,7 @@ class NullableDateWidget(QWidget):
 
         self.edit = QDateEdit(self)
         self.edit.setCalendarPopup(True)
-        self.edit.setDisplayFormat("dd/MM/yyyy")
+        self.edit.setDisplayFormat("dd/MM/yy")
         self.edit.setSpecialValueText("")
         self.edit.setMinimumDate(self._min)
         self.edit.setDate(self._min)
@@ -51,7 +51,7 @@ class NullableDateWidget(QWidget):
     def text(self) -> str:
         if self.edit.date() == self._min:
             return ""
-        return self.edit.date().toString("dd/MM/yyyy")
+        return self.edit.date().toString("dd/MM/yy")
 
     def clear(self) -> None:
         self.set_text("")

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import csv
+import re
 import tempfile
 from pathlib import Path
 from typing import Iterable
@@ -8,9 +9,22 @@ from typing import Iterable
 
 class CsvStore:
     def __init__(self, path: Path, fieldnames: list[str]):
-        self.path = path
+        self.path = self._resolve_path(path)
         self.fieldnames = fieldnames
         self.path.parent.mkdir(parents=True, exist_ok=True)
+
+    def _resolve_path(self, path: Path) -> Path:
+        candidates = list(path.parent.glob(f"test_{path.stem}*{path.suffix}"))
+        if not candidates:
+            return path
+
+        def rank(p: Path) -> tuple[int, float]:
+            # Prefer higher explicit version suffix: test_<name>_v2.csv > test_<name>.csv
+            match = re.search(r"_v(\d+)$", p.stem)
+            version = int(match.group(1)) if match else 0
+            return (version, p.stat().st_mtime)
+
+        return max(candidates, key=rank)
 
     def ensure_exists(self) -> None:
         if self.path.exists():

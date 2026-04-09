@@ -25,6 +25,7 @@ from PySide6.QtWidgets import (
 )
 
 from storage import CsvStore
+from ui_settings import UiSettingsStore
 from utils import BETTING_STATUS_ORDER, compute_betting_status, new_id, parse_date, parse_decimal, status_color, today_str
 from widgets import NullableDateWidget
 
@@ -39,7 +40,7 @@ HEADERS = [
     "Status", "Bookie", "P.Start", "Promo", "Dep", "QB1 Type", "QB1 Amt", "QB1 Date",
     "QB1 ✓", "QB2", "Bonus Type", "Bonus Amt", "Bonus Date", "Bonus ✓", "Final", "Bank", "Notes",
 ]
-COL_WIDTHS = [105, 105, 82, 120, 72, 95, 78, 86, 88, 60, 110, 82, 90, 96, 78, 95, 130]
+COL_WIDTHS = [105, 105, 132, 120, 72, 95, 78, 140, 88, 60, 110, 82, 148, 96, 78, 95, 130]
 QB_TYPES = ["", "Single", "Acca", "Bet Builder", "Other"]
 BONUS_TYPES = ["", "Free Bet (SNR)", "Free Bet (SR)", "Bonus Cash", "Refund", "Profit Boost", "Other"]
 YES_NO = ["No", "Yes"]
@@ -59,16 +60,20 @@ class BettingTab(QWidget):
     def __init__(self, data_dir: Path, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.store = CsvStore(data_dir / "betting.csv", FIELDS)
+        self.ui_settings = UiSettingsStore(data_dir)
         self.records = self.store.load()
         self.active_record_id: str | None = None
         self.sort_field = "promo_start_date"
         self.sort_ascending = True
         self.undo_stack: list[tuple[list[dict[str, str]], str | None]] = []
+        self.redo_stack: list[tuple[list[dict[str, str]], str | None]] = []
         self.row_to_record_id: dict[int, str] = {}
         self.main_row_for_record_id: dict[str, int] = {}
         self.visible_record_ids: list[str] = []
         self.widget_map: dict[tuple[str, str], QWidget] = {}
         self._startup_focus_pending = True
+        self._applying_col_widths = False
+        self.col_widths = self.ui_settings.get_column_widths("betting", COL_WIDTHS, len(HEADERS))
 
         self._normalize_records()
 
@@ -76,6 +81,11 @@ class BettingTab(QWidget):
         self.save_timer.setSingleShot(True)
         self.save_timer.setInterval(700)
         self.save_timer.timeout.connect(self._save_records)
+
+        self.settings_timer = QTimer(self)
+        self.settings_timer.setSingleShot(True)
+        self.settings_timer.setInterval(300)
+        self.settings_timer.timeout.connect(self._save_column_widths)
 
         self.search_edit = QLineEdit(self)
         self.search_edit.setPlaceholderText("Search Bookie or Promo")
@@ -93,6 +103,10 @@ class BettingTab(QWidget):
         self.undo_btn.clicked.connect(self.undo_last_change)
         self.undo_btn.setEnabled(False)
 
+        self.redo_btn = QPushButton("Redo", self)
+        self.redo_btn.clicked.connect(self.redo_last_change)
+        self.redo_btn.setEnabled(False)
+
         self.add_btn = QPushButton("Add Record", self)
         self.add_btn.clicked.connect(self.add_record)
 
@@ -105,8 +119,12 @@ class BettingTab(QWidget):
         top.addWidget(self.filter_toggle)
         top.addWidget(self.clear_filters_btn)
         top.addWidget(self.undo_btn)
-        top.addWidget(self.add_btn)
-        top.addWidget(self.delete_btn)
+        top.addWidget(self.redo_btn)
+
+        actions = QHBoxLayout()
+        actions.addStretch(1)
+        actions.addWidget(self.add_btn)
+        actions.addWidget(self.delete_btn)
 
         self.filter_panel = self._build_filter_panel()
         self.filter_panel.setVisible(False)
@@ -121,36 +139,21 @@ class BettingTab(QWidget):
         self.table.horizontalHeader().setSectionsMovable(False)
         self.table.horizontalHeader().setSectionResizeMode(QHeaderView.Interactive)
         self.table.horizontalHeader().sectionClicked.connect(self.sort_by_column)
+        self.table.horizontalHeader().sectionResized.connect(self._on_section_resized)
 
         lay = QVBoxLayout(self)
         lay.addLayout(top)
+        lay.addLayout(actions)
         lay.addWidget(self.filter_panel)
         lay.addWidget(self.table, 1)
 
         QShortcut(QKeySequence.Undo, self, activated=self.undo_last_change)
+        QShortcut(QKeySequence.Redo, self, activated=self.redo_last_change)
         self.render_table()
 
     def _normalize_records(self) -> None:
-        normalized = []
-        for raw in self.records:
-            rec = {field: (raw.get(field, "") or "") for field in FIELDS}
-            if not rec["id"]:
-                rec["id"] = new_id()
-            if rec["has_qb2"] not in YES_NO:
-                rec["has_qb2"] = "No"
-            if rec.get("qb1_settled") not in YES_NO:
-                rec["qb1_settled"] = "No"
-            if rec.get("qb2_settled") not in YES_NO:
-                rec["qb2_settled"] = "No"
-            if rec.get("bonus_settled") not in YES_NO:
-                rec["bonus_settled"] = "No"
-            if rec["bank_status"] not in BANK:
-                rec["bank_status"] = "Unconfirmed"
-            if rec["has_qb2"] == "No":
-                rec["qb2_settled"] = "No"
+        for rec in self.records:
             rec["status"] = compute_betting_status(rec)
-            normalized.append(rec)
-        self.records = normalized
         self._save_records()
 
     def _build_filter_panel(self) -> QWidget:
@@ -190,13 +193,30 @@ class BettingTab(QWidget):
     def _push_undo(self) -> None:
         self.undo_stack.append((deepcopy(self.records), self.active_record_id))
         self.undo_stack = self.undo_stack[-30:]
-        self.undo_btn.setEnabled(True)
+        self.redo_stack.clear()
+        self._update_history_buttons()
+
+    def _update_history_buttons(self) -> None:
+        self.undo_btn.setEnabled(bool(self.undo_stack))
+        self.redo_btn.setEnabled(bool(self.redo_stack))
 
     def undo_last_change(self) -> None:
         if not self.undo_stack:
             return
+        self.redo_stack.append((deepcopy(self.records), self.active_record_id))
+        self.redo_stack = self.redo_stack[-30:]
         self.records, self.active_record_id = self.undo_stack.pop()
-        self.undo_btn.setEnabled(bool(self.undo_stack))
+        self._update_history_buttons()
+        self.schedule_save()
+        self.render_table()
+
+    def redo_last_change(self) -> None:
+        if not self.redo_stack:
+            return
+        self.undo_stack.append((deepcopy(self.records), self.active_record_id))
+        self.undo_stack = self.undo_stack[-30:]
+        self.records, self.active_record_id = self.redo_stack.pop()
+        self._update_history_buttons()
         self.schedule_save()
         self.render_table()
 
@@ -349,11 +369,28 @@ class BettingTab(QWidget):
                 self._render_qb2_row(row, rec)
                 self.row_to_record_id[row] = rec["id"]
                 row += 1
-        for i, w in enumerate(COL_WIDTHS):
-            self.table.setColumnWidth(i, w)
+        self._applying_col_widths = True
+        try:
+            for i, w in enumerate(self.col_widths):
+                self.table.setColumnWidth(i, w)
+        finally:
+            self._applying_col_widths = False
         self.table.horizontalHeader().setStretchLastSection(False)
         self.table.setUpdatesEnabled(True)
         self._restore_selection()
+
+    def _on_section_resized(self, index: int, _old_size: int, new_size: int) -> None:
+        if self._applying_col_widths:
+            return
+        if not 0 <= index < len(self.col_widths):
+            return
+        if new_size <= 0:
+            return
+        self.col_widths[index] = new_size
+        self.settings_timer.start()
+
+    def _save_column_widths(self) -> None:
+        self.ui_settings.set_column_widths("betting", self.col_widths)
 
     def _restore_selection(self) -> None:
         target_row: int | None = None
@@ -379,6 +416,7 @@ class BettingTab(QWidget):
     def _render_main_row(self, row: int, rec: dict[str, str]) -> None:
         item = QTableWidgetItem(rec["status"])
         item.setFlags(Qt.ItemIsEnabled | Qt.ItemIsSelectable)
+        item.setTextAlignment(Qt.AlignCenter)
         item.setBackground(QBrush(QColor(status_color(rec["status"]))))
         item.setForeground(QBrush(QColor("white")))
         self.table.setItem(row, 0, item)
@@ -404,25 +442,15 @@ class BettingTab(QWidget):
             self.table.setCellWidget(row, col, widget)
 
     def _render_qb2_row(self, row: int, rec: dict[str, str]) -> None:
-        wrap = QWidget(self.table)
-        lay = QHBoxLayout(wrap)
-        lay.setContentsMargins(10, 4, 10, 4)
-        lay.setSpacing(6)
-        lbl = QLabel("QB2", wrap)
-        lbl.setStyleSheet("font-weight: 600;")
-        lay.addWidget(lbl)
-        lay.addWidget(QLabel("Type", wrap))
-        lay.addWidget(self._combo_widget(rec, row, "qb2_type", QB_TYPES))
-        lay.addWidget(QLabel("Amt", wrap))
-        lay.addWidget(self._line_widget(rec, row, "qb2_amount"))
-        lay.addWidget(QLabel("Date", wrap))
-        lay.addWidget(self._date_widget(rec, row, "qb2_date"))
-        lay.addWidget(QLabel("✓", wrap))
-        lay.addWidget(self._check_widget(rec, row, "qb2_settled"))
-        lay.addStretch(1)
-        wrap.setStyleSheet("background-color: rgba(0,0,0,0.03);")
-        self.table.setSpan(row, 0, 1, len(HEADERS))
-        self.table.setCellWidget(row, 0, wrap)
+        qb2_item = QTableWidgetItem("QB2")
+        qb2_item.setFlags(Qt.ItemIsEnabled | Qt.ItemIsSelectable)
+        qb2_item.setTextAlignment(Qt.AlignCenter)
+        self.table.setItem(row, 9, qb2_item)
+
+        self.table.setCellWidget(row, 5, self._combo_widget(rec, row, "qb2_type", QB_TYPES))
+        self.table.setCellWidget(row, 6, self._line_widget(rec, row, "qb2_amount"))
+        self.table.setCellWidget(row, 7, self._date_widget(rec, row, "qb2_date"))
+        self.table.setCellWidget(row, 8, self._check_widget(rec, row, "qb2_settled"))
 
     def _register_widget(self, widget: QWidget, record_id: str, row: int, field: str) -> QWidget:
         widget.setProperty("record_id", record_id)
@@ -466,10 +494,17 @@ class BettingTab(QWidget):
         return self._register_widget(w, rec["id"], row, field)
 
     def _check_widget(self, rec: dict[str, str], row: int, field: str) -> QWidget:
+        wrap = QWidget(self.table)
+        lay = QHBoxLayout(wrap)
+        lay.setContentsMargins(0, 0, 0, 0)
+        lay.addStretch(1)
         box = QCheckBox(self.table)
         box.setChecked(rec.get(field, "No") == "Yes")
         box.stateChanged.connect(partial(self._check_changed, rec["id"], row, field, box))
-        return self._register_widget(box, rec["id"], row, field)
+        lay.addWidget(box)
+        lay.addStretch(1)
+        self._register_widget(box, rec["id"], row, field)
+        return wrap
 
     def eventFilter(self, watched, event):  # noqa: ANN001
         if event.type() in {QEvent.MouseButtonPress, QEvent.FocusIn}:
@@ -608,7 +643,7 @@ class BettingTab(QWidget):
                     rec[f] = ""
             else:
                 self.undo_stack.pop()
-                self.undo_btn.setEnabled(bool(self.undo_stack))
+                self._update_history_buttons()
                 self.render_table()
                 return
         rec[field] = value

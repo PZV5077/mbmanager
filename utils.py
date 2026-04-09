@@ -4,7 +4,7 @@ from datetime import datetime
 from decimal import Decimal, InvalidOperation
 from uuid import uuid4
 
-DATE_FMT = "%d/%m/%Y"
+DATE_FMT = "%d/%m/%y"
 
 
 def new_id() -> str:
@@ -90,19 +90,25 @@ def compute_betting_status(rec: dict[str, str]) -> str:
         return "NotStarted"
     if not (rec.get("deposit_amount", "") or "").strip():
         return "NeedDeposit"
-    if not (rec.get("qb1_type", "") or "").strip() or not (rec.get("qb1_amount", "") or "").strip():
-        return "NeedQB1"
-    if rec.get("qb1_settled", "No") != "Yes":
+    qb1_settled = rec.get("qb1_settled", "No") == "Yes"
+    if not qb1_settled:
+        if not (rec.get("qb1_type", "") or "").strip() or not (rec.get("qb1_amount", "") or "").strip():
+            return "NeedQB1"
         return "WaitQB1Settle"
+
     if rec.get("has_qb2") == "Yes":
-        if not (rec.get("qb2_type", "") or "").strip() or not (rec.get("qb2_amount", "") or "").strip():
-            return "NeedQB2"
-        if rec.get("qb2_settled", "No") != "Yes":
+        qb2_settled = rec.get("qb2_settled", "No") == "Yes"
+        if not qb2_settled:
+            if not (rec.get("qb2_type", "") or "").strip() or not (rec.get("qb2_amount", "") or "").strip():
+                return "NeedQB2"
             return "WaitQB2Settle"
-    if not (rec.get("bonus_type", "") or "").strip() or not (rec.get("bonus_amount", "") or "").strip():
-        return "NeedBonus"
-    if rec.get("bonus_settled", "No") != "Yes":
+
+    bonus_settled = rec.get("bonus_settled", "No") == "Yes"
+    if not bonus_settled:
+        if not (rec.get("bonus_type", "") or "").strip() or not (rec.get("bonus_amount", "") or "").strip():
+            return "NeedBonus"
         return "WaitBonusSettle"
+
     if not (rec.get("final_amount", "") or "").strip():
         return "NeedWithdraw"
     if rec.get("bank_status") != "Received":
