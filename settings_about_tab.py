@@ -3,13 +3,26 @@ from __future__ import annotations
 from pathlib import Path
 
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QHBoxLayout, QLabel, QMessageBox, QPushButton, QVBoxLayout, QWidget
+from PySide6.QtGui import QFont
+from PySide6.QtWidgets import (
+    QApplication,
+    QHBoxLayout,
+    QLabel,
+    QMessageBox,
+    QPushButton,
+    QSpinBox,
+    QVBoxLayout,
+    QWidget,
+)
+
+from ui_settings import UiSettingsStore
 
 
 class SettingsAboutTab(QWidget):
     def __init__(self, data_dir: Path, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.data_dir = data_dir
+        self.settings = UiSettingsStore(data_dir)
 
         lay = QVBoxLayout(self)
         lay.setContentsMargins(24, 24, 24, 24)
@@ -21,10 +34,27 @@ class SettingsAboutTab(QWidget):
         intro = QLabel("A matched betting manager designed as a supportment of Oddsmonkey or Outplayed.", self)
         intro.setWordWrap(True)
 
+        # Font Size Setting
+        font_scale_label = QLabel("Font Size:", self)
+        self.font_scale_spinbox = QSpinBox(self)
+        self.font_scale_spinbox.setMinimum(50)
+        self.font_scale_spinbox.setMaximum(200)
+        self.font_scale_spinbox.setValue(self.settings.get_font_scale())
+        self.font_scale_spinbox.setSuffix("%")
+        self.font_scale_spinbox.setMaximumWidth(100)
+        self.font_scale_spinbox.valueChanged.connect(self._on_font_scale_changed)
+
+        font_scale_layout = QHBoxLayout()
+        font_scale_layout.setContentsMargins(0, 0, 0, 0)
+        font_scale_layout.setSpacing(10)
+        font_scale_layout.addWidget(font_scale_label)
+        font_scale_layout.addWidget(self.font_scale_spinbox)
+        font_scale_layout.addStretch(1)
+
         danger_style = (
             "QPushButton {"
             "border: 2px solid #7F1D1D;"
-            "color: #00000;"
+            "color: #FFFFFF;"
             "background: transparent;"
             "padding: 6px 12px;"
             "border-radius: 6px;"
@@ -63,6 +93,7 @@ class SettingsAboutTab(QWidget):
 
         lay.addWidget(title)
         lay.addWidget(intro)
+        lay.addLayout(font_scale_layout)
         lay.addLayout(actions)
         lay.addWidget(author)
         lay.addWidget(github)
@@ -136,3 +167,16 @@ class SettingsAboutTab(QWidget):
             return
 
         QMessageBox.information(self, "Delete Completed", f"Deleted {deleted} file(s).")
+
+    def _on_font_scale_changed(self, value: int) -> None:
+        self.settings.set_font_scale(value)
+        
+        # Apply font scaling to the application immediately
+        app = QApplication.instance()
+        if app is not None and isinstance(app, QApplication):
+            default_font = app.font()
+            base_size = default_font.pointSize()
+            if base_size > 0:
+                scaled_size = int(base_size * value / 100)
+                default_font.setPointSize(scaled_size)
+                app.setFont(default_font)

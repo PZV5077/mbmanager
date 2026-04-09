@@ -61,3 +61,15 @@ class UiSettingsStore:
             tabs[tab_key] = tab_data
         tab_data["column_widths"] = [int(w) for w in widths]
         self.save(data)
+
+    def get_font_scale(self, default: int = 100) -> int:
+        data = self.load()
+        scale = data.get("font_scale")
+        if isinstance(scale, int) and 50 <= scale <= 200:
+            return scale
+        return default
+
+    def set_font_scale(self, scale: int) -> None:
+        data = self.load()
+        data["font_scale"] = max(50, min(200, scale))
+        self.save(data)

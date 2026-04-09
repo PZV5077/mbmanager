@@ -4,11 +4,13 @@ import sys
 from pathlib import Path
 
 from PySide6.QtCore import Qt
+from PySide6.QtGui import QFont
 from PySide6.QtWidgets import QApplication, QLabel, QMainWindow, QPushButton, QTabBar, QTabWidget, QWidget
 
 from betting_tab import BettingTab
 from casino_tab import CasinoTab
 from settings_about_tab import SettingsAboutTab
+from ui_settings import UiSettingsStore
 
 
 class MainWindow(QMainWindow):
@@ -26,7 +28,6 @@ class MainWindow(QMainWindow):
         tabs.tabBar().setTabVisible(self.settings_index, False)
 
         self.settings_btn = QPushButton("Settings and About", tabs)
-        self.settings_btn.setFlat(True)
         self.settings_btn.clicked.connect(self._open_settings)
         tabs.setCornerWidget(self.settings_btn, Qt.Corner.TopRightCorner)
         tabs.currentChanged.connect(self._sync_settings_button)
@@ -58,6 +59,17 @@ class MainWindow(QMainWindow):
 
 def main() -> int:
     app = QApplication(sys.argv)
+    
+    # Apply font scaling
+    data_dir = Path(__file__).resolve().parent / "data"
+    settings_store = UiSettingsStore(data_dir)
+    font_scale = settings_store.get_font_scale(100)
+    
+    default_font = app.font()
+    scaled_size = int(default_font.pointSize() * font_scale / 100) if font_scale != 100 else default_font.pointSize()
+    default_font.setPointSize(scaled_size)
+    app.setFont(default_font)
+    
     win = MainWindow()
     win.show()
     return app.exec()
