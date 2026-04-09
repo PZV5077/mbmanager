@@ -54,7 +54,8 @@ jobs:
           pip install -r requirements.txt
           pip install pyinstaller
           sudo apt-get update
-          sudo apt-get install -y fpm
+          sudo apt-get install -y ruby ruby-dev build-essential
+          sudo gem install fpm
       
       - name: Build executable
         run: |
