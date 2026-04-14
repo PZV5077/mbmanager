@@ -7,7 +7,7 @@ from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
-from utils import DATE_FMT, new_id, parse_date, today_str
+from .utils import DATE_FMT, new_id, parse_date, today_str
 
 
 def _date_to_text(value: date) -> str:
@@ -136,15 +136,33 @@ class ReloadOfferStore:
         window_start = today - timedelta(days=history_days)
         window_end = today + timedelta(days=horizon_days)
 
-        active_ids = {template["id"] for template in db["templates"] if template.get("enabled", True)}
+        active_templates = [template for template in db["templates"] if template.get("enabled", True)]
+        active_ids = {template["id"] for template in active_templates}
+        desired_dates_by_template: dict[str, set[str]] = {}
+        for template in active_templates:
+            desired_dates_by_template[template["id"]] = {
+                _date_to_text(occurrence)
+                for occurrence in self._occurrence_dates(template, window_start, window_end)
+            }
+
         retained_instances: list[dict[str, Any]] = []
         for instance in db["instances"]:
             scheduled = _text_to_date(instance.get("scheduled_date"))
             if scheduled is None:
                 continue
-            if instance.get("template_id") not in active_ids and scheduled >= today:
+            template_id = str(instance.get("template_id") or "")
+            if template_id not in active_ids and scheduled >= today:
                 continue
-            if window_start <= scheduled <= window_end or scheduled < today:
+            if scheduled < today:
+                retained_instances.append(self._normalize_instance(instance))
+                continue
+
+            if template_id in active_ids:
+                desired_dates = desired_dates_by_template.get(template_id, set())
+                if instance.get("scheduled_date") not in desired_dates:
+                    continue
+
+            if window_start <= scheduled <= window_end:
                 retained_instances.append(self._normalize_instance(instance))
 
         existing_keys = {
@@ -152,9 +170,7 @@ class ReloadOfferStore:
             for instance in retained_instances
         }
 
-        for template in db["templates"]:
-            if not template.get("enabled", True):
-                continue
+        for template in active_templates:
             for occurrence in self._occurrence_dates(template, window_start, window_end):
                 scheduled_text = _date_to_text(occurrence)
                 key = (template["id"], scheduled_text)

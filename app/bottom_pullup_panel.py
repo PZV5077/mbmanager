@@ -34,8 +34,8 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from reload_offer_store import ReloadOfferStore
-from utils import status_color
+from .reload_offer_store import ReloadOfferStore
+from .utils import status_color
 
 RELOAD_QB_TYPES = ["", "Single", "Acca", "Bet Builder", "Other"]
 RELOAD_BONUS_TYPES = ["", "Free Bet (SNR)", "Free Bet (SR)", "Bonus Cash", "Refund", "Profit Boost", "Other"]

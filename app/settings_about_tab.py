@@ -15,8 +15,8 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from reload_offer_store import ReloadOfferStore
-from ui_settings import UiSettingsStore
+from .reload_offer_store import ReloadOfferStore
+from .ui_settings import UiSettingsStore
 
 
 class SettingsAboutTab(QWidget):

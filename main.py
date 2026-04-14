@@ -5,17 +5,24 @@ import sys
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QApplication, QLabel, QMainWindow, QPushButton, QTabBar, QTabWidget, QVBoxLayout, QWidget
 
-from betting_tab import BettingTab
-from bottom_pullup_panel import BottomPullUpPanel
-from casino_tab import CasinoTab
-from settings_about_tab import SettingsAboutTab
-from ui_settings import UiSettingsStore
-from utils import get_data_dir
+from app.betting_tab import BettingTab
+from app.bottom_pullup_panel import BottomPullUpPanel
+from app.casino_tab import CasinoTab
+from app.settings_about_tab import SettingsAboutTab
+from app.ui_settings import UiSettingsStore
+from app.utils import get_data_dir
 
 
 class MainWindow(QMainWindow):
     def __init__(self) -> None:
         super().__init__()
+        self.setWindowFlags(
+            Qt.Window
+            | Qt.WindowTitleHint
+            | Qt.WindowSystemMenuHint
+            | Qt.WindowMinMaxButtonsHint
+            | Qt.WindowCloseButtonHint
+        )
         self.setWindowTitle("Matched Betting Manager")
         self.resize(1440, 860)
         self.data_dir = get_data_dir()
