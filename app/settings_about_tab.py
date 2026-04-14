@@ -29,7 +29,7 @@ class SettingsAboutTab(QWidget):
         lay.setContentsMargins(24, 24, 24, 24)
         lay.setSpacing(12)
 
-        title = QLabel("Matched Betting Manager v1.0", self)
+        title = QLabel("Matched Betting Manager v1.1", self)
         title.setStyleSheet("font-size: 18px; font-weight: 700;")
 
         intro = QLabel("A matched betting manager designed as a supportment of Oddsmonkey or Outplayed.", self)
