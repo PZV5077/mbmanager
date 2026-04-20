@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Literal
 
 from PySide6.QtGui import QFont
@@ -23,6 +24,11 @@ def apply_galaxy_theme(app: QApplication, mode: str = "light") -> ThemeMode:
     app.setStyleSheet(_light_stylesheet() if active_mode == "light" else _dark_stylesheet())
     app.setProperty("theme_mode", active_mode)
     return active_mode
+
+
+def _icon_uri(file_name: str) -> str:
+    icon_path = Path(__file__).resolve().parent / "icons" / file_name
+    return icon_path.as_uri()
 
 
 def _light_stylesheet() -> str:
@@ -86,6 +92,18 @@ def _light_stylesheet() -> str:
             selection-color: #FFFFFF;
         }
 
+        QAbstractItemView {
+            background: #FFFFFF;
+            color: #0F172A;
+            selection-background-color: #0EA5E9;
+            selection-color: #FFFFFF;
+            outline: 0;
+        }
+
+        QAbstractItemView::item {
+            color: #0F172A;
+        }
+
         QLineEdit:focus,
         QComboBox:focus,
         QDateEdit:focus,
@@ -102,6 +120,7 @@ def _light_stylesheet() -> str:
             border-radius: 0px;
             border: 1px solid #D3DFEE;
             background: transparent;
+            color: #0F172A;
             padding: 2px 4px;
             margin: 0px;
         }
@@ -116,17 +135,22 @@ def _light_stylesheet() -> str:
         }
 
         QComboBox::drop-down {
-            border: none;
+            subcontrol-origin: padding;
+            subcontrol-position: top right;
             width: 20px;
-            background: transparent;
+            border: none;
+            border-left: 1px solid #B7CCE6;
+            background: #F3F8FF;
+        }
+
+        QComboBox::drop-down:hover {
+            background: #E8F2FF;
         }
 
         QComboBox::down-arrow {
-            image: none;
-            border-left: 5px solid transparent;
-            border-right: 5px solid transparent;
-            border-top: 6px solid #1E293B;
-            margin-right: 6px;
+            image: url("__COMBO_ARROW_LIGHT__");
+            width: 12px;
+            height: 8px;
         }
 
         QComboBox QAbstractItemView {
@@ -142,6 +166,7 @@ def _light_stylesheet() -> str:
             min-height: 26px;
             padding: 4px 8px;
             background: #FFFFFF;
+            color: #0F172A;
         }
 
         QComboBox QAbstractItemView::item:hover {
@@ -152,6 +177,10 @@ def _light_stylesheet() -> str:
         QMenu {
             background: #FFFFFF;
             border: 1px solid #B7CCE6;
+            color: #0F172A;
+        }
+
+        QMenu::item {
             color: #0F172A;
         }
 
@@ -290,6 +319,7 @@ def _light_stylesheet() -> str:
             border: 1px solid #C9D9EE;
             border-radius: 12px;
             alternate-background-color: #F8FBFF;
+            color: #0F172A;
         }
 
         QTableWidget::item:selected {
@@ -334,7 +364,7 @@ def _light_stylesheet() -> str:
             font-weight: 800;
             color: #0B3B4A;
         }
-    """
+    """.replace("__COMBO_ARROW_LIGHT__", _icon_uri("chevron_down_dark.svg"))
 
 
 def _dark_stylesheet() -> str:
@@ -398,6 +428,18 @@ def _dark_stylesheet() -> str:
             selection-color: #F8FAFC;
         }
 
+        QAbstractItemView {
+            background: #111827;
+            color: #E5E7EB;
+            selection-background-color: #0369A1;
+            selection-color: #F8FAFC;
+            outline: 0;
+        }
+
+        QAbstractItemView::item {
+            color: #E5E7EB;
+        }
+
         QLineEdit:focus,
         QComboBox:focus,
         QDateEdit:focus,
@@ -414,6 +456,7 @@ def _dark_stylesheet() -> str:
             border-radius: 0px;
             border: 1px solid #2A3A54;
             background: transparent;
+            color: #E2E8F0;
             padding: 2px 4px;
             margin: 0px;
         }
@@ -428,17 +471,22 @@ def _dark_stylesheet() -> str:
         }
 
         QComboBox::drop-down {
-            border: none;
+            subcontrol-origin: padding;
+            subcontrol-position: top right;
             width: 20px;
-            background: transparent;
+            border: none;
+            border-left: 1px solid #3A4B64;
+            background: #1D2A41;
+        }
+
+        QComboBox::drop-down:hover {
+            background: #24324A;
         }
 
         QComboBox::down-arrow {
-            image: none;
-            border-left: 5px solid transparent;
-            border-right: 5px solid transparent;
-            border-top: 6px solid #E2E8F0;
-            margin-right: 6px;
+            image: url("__COMBO_ARROW_DARK__");
+            width: 12px;
+            height: 8px;
         }
 
         QComboBox QAbstractItemView {
@@ -454,6 +502,7 @@ def _dark_stylesheet() -> str:
             min-height: 26px;
             padding: 4px 8px;
             background: #111827;
+            color: #E5E7EB;
         }
 
         QComboBox QAbstractItemView::item:hover {
@@ -464,6 +513,10 @@ def _dark_stylesheet() -> str:
         QMenu {
             background: #111827;
             border: 1px solid #3A4B64;
+            color: #E5E7EB;
+        }
+
+        QMenu::item {
             color: #E5E7EB;
         }
 
@@ -653,4 +706,4 @@ def _dark_stylesheet() -> str:
             font-weight: 800;
             color: #A5F3FC;
         }
-    """
+    """.replace("__COMBO_ARROW_DARK__", _icon_uri("chevron_down_light.svg"))

@@ -54,3 +54,10 @@
   - Now (set current local date/time)
 - Kept click-to-open behavior directly on date/datetime cells.
 - Added modern calendar styling for both light and dark themes inside popup dialogs.
+
+### UI Patch - Theme Compatibility Hardening
+- Replaced combo box pseudo-arrow drawing with explicit SVG chevrons for stable visibility in light/dark themes.
+- Fixed combo popup and menu text colors that could inherit dark system palette values in light mode.
+- Hardened date popup theming by styling the popup shell (`QDialog#dateTimePopup`) and calendar internals together.
+- Added explicit palette synchronization for calendar view, viewport, and weekday/header rows to prevent Wayland post-show color fallback.
+- Fixed weekday row background in month view by setting `QPalette.AlternateBase` (and disabled group equivalents) in light mode.

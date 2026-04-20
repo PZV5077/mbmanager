@@ -1,17 +1,19 @@
 from __future__ import annotations
 
-from PySide6.QtCore import QDate, QDateTime, QEvent, Qt, QTime, QUrl, Signal
-from PySide6.QtGui import QDesktopServices
+from PySide6.QtCore import QDate, QDateTime, QEvent, Qt, QTime, QTimer, QUrl, Signal
+from PySide6.QtGui import QColor, QDesktopServices, QPalette
 from PySide6.QtWidgets import (
     QApplication,
     QCalendarWidget,
     QDialog,
     QFrame,
+    QHeaderView,
     QHBoxLayout,
     QLabel,
     QLineEdit,
     QPushButton,
     QSpinBox,
+    QTableView,
     QToolButton,
     QVBoxLayout,
     QWidget,
@@ -38,6 +40,75 @@ def _current_minute_datetime() -> QDateTime:
     return QDateTime(now.date(), QTime(now.time().hour(), now.time().minute()))
 
 
+def _is_dark_theme_mode() -> bool:
+    app = QApplication.instance()
+    if app is None or not isinstance(app, QApplication):
+        return False
+    return str(app.property("theme_mode") or "light") == "dark"
+
+
+def _apply_calendar_popup_palette(popup: QDialog, calendar: QCalendarWidget) -> None:
+    dark = _is_dark_theme_mode()
+    if dark:
+        panel_bg = QColor("#0F172A")
+        view_bg = QColor("#111827")
+        header_bg = QColor("#1E293B")
+        text = QColor("#E2E8F0")
+        highlight = QColor("#0369A1")
+        highlight_text = QColor("#F8FAFC")
+        disabled_text = QColor("#64748B")
+    else:
+        panel_bg = QColor("#FFFFFF")
+        view_bg = QColor("#FFFFFF")
+        header_bg = QColor("#F8FBFF")
+        text = QColor("#0F172A")
+        highlight = QColor("#0EA5E9")
+        highlight_text = QColor("#FFFFFF")
+        disabled_text = QColor("#94A3B8")
+
+    palette = popup.palette()
+    palette.setColor(QPalette.ColorRole.Window, panel_bg)
+    palette.setColor(QPalette.ColorRole.Base, view_bg)
+    palette.setColor(QPalette.ColorRole.AlternateBase, header_bg)
+    palette.setColor(QPalette.ColorRole.Text, text)
+    palette.setColor(QPalette.ColorRole.WindowText, text)
+    palette.setColor(QPalette.ColorRole.ButtonText, text)
+    palette.setColor(QPalette.ColorRole.Highlight, highlight)
+    palette.setColor(QPalette.ColorRole.HighlightedText, highlight_text)
+    palette.setColor(QPalette.ColorGroup.Disabled, QPalette.ColorRole.Window, panel_bg)
+    palette.setColor(QPalette.ColorGroup.Disabled, QPalette.ColorRole.Base, view_bg)
+    palette.setColor(QPalette.ColorGroup.Disabled, QPalette.ColorRole.AlternateBase, header_bg)
+    palette.setColor(QPalette.ColorGroup.Disabled, QPalette.ColorRole.Text, disabled_text)
+    palette.setColor(QPalette.ColorGroup.Disabled, QPalette.ColorRole.WindowText, disabled_text)
+
+    popup.setPalette(palette)
+    calendar.setPalette(palette)
+
+    view = calendar.findChild(QTableView, "qt_calendar_calendarview")
+    if view is None:
+        return
+
+    view.setPalette(palette)
+    view.setAutoFillBackground(True)
+
+    viewport = view.viewport()
+    viewport.setPalette(palette)
+    viewport.setAutoFillBackground(True)
+
+    for header in (view.horizontalHeader(), view.verticalHeader()):
+        if header is None:
+            continue
+        header_palette = header.palette()
+        header_palette.setColor(QPalette.ColorRole.Window, header_bg)
+        header_palette.setColor(QPalette.ColorRole.Base, header_bg)
+        header_palette.setColor(QPalette.ColorRole.Button, header_bg)
+        header_palette.setColor(QPalette.ColorRole.Text, text)
+        header_palette.setColor(QPalette.ColorRole.ButtonText, text)
+        header_palette.setColor(QPalette.ColorRole.WindowText, text)
+        header.setPalette(header_palette)
+        header.setAutoFillBackground(True)
+
+
 class _DateTimePopup(QDialog):
     def __init__(self, initial_value: QDateTime, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -46,12 +117,14 @@ class _DateTimePopup(QDialog):
         self.setWindowFlags(Qt.WindowType.Popup)
         self.setWindowTitle("DateTime")
         self.setObjectName("dateTimePopup")
+        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        self.setAutoFillBackground(True)
 
         self.calendar = QCalendarWidget(self)
         self.calendar.setGridVisible(False)
         self.calendar.setSelectedDate(initial_value.date())
         self.calendar.setVerticalHeaderFormat(QCalendarWidget.VerticalHeaderFormat.NoVerticalHeader)
-        self.calendar.setStyleSheet(_calendar_popup_stylesheet())
+        self._refresh_theme()
 
         time_wrap = QFrame(self)
         time_layout = QHBoxLayout(time_wrap)
@@ -105,6 +178,16 @@ class _DateTimePopup(QDialog):
 
         self.resize(360, 340)
 
+    def showEvent(self, event: QEvent) -> None:
+        super().showEvent(event)
+        # Wayland popup polish can override calendar view colors after show.
+        self._refresh_theme()
+        QTimer.singleShot(0, self._refresh_theme)
+
+    def _refresh_theme(self) -> None:
+        self.setStyleSheet(_calendar_popup_stylesheet())
+        _apply_calendar_popup_palette(self, self.calendar)
+
     @property
     def cleared(self) -> bool:
         return self._cleared
@@ -133,6 +216,20 @@ def _calendar_popup_stylesheet() -> str:
 
     if mode == "dark":
         return """
+            QDialog#dateTimePopup {
+                background: #0F172A;
+                border: 1px solid #334155;
+                border-radius: 10px;
+            }
+
+            QDialog#dateTimePopup QLabel {
+                color: #E2E8F0;
+            }
+
+            QDialog#dateTimePopup QFrame {
+                background: transparent;
+            }
+
             QCalendarWidget {
                 border: 1px solid #334155;
                 background: #0F172A;
@@ -179,12 +276,45 @@ def _calendar_popup_stylesheet() -> str:
                 outline: 0;
             }
 
+            QCalendarWidget QTableView {
+                background: #111827;
+                color: #E2E8F0;
+            }
+
+            QCalendarWidget QTableView#qt_calendar_calendarview QWidget#qt_scrollarea_viewport {
+                background: #111827;
+                color: #E2E8F0;
+            }
+
+            QCalendarWidget QTableView#qt_calendar_calendarview QHeaderView::section {
+                background: #1E293B;
+                color: #E2E8F0;
+                border: none;
+                border-bottom: 1px solid #334155;
+                padding: 6px 0px;
+                font-weight: 700;
+            }
+
             QCalendarWidget QAbstractItemView:disabled {
                 color: #64748B;
             }
         """
 
     return """
+        QDialog#dateTimePopup {
+            background: #FFFFFF;
+            border: 1px solid #C7D8EE;
+            border-radius: 10px;
+        }
+
+        QDialog#dateTimePopup QLabel {
+            color: #0F172A;
+        }
+
+        QDialog#dateTimePopup QFrame {
+            background: transparent;
+        }
+
         QCalendarWidget {
             border: 1px solid #C7D8EE;
             background: #FFFFFF;
@@ -229,6 +359,25 @@ def _calendar_popup_stylesheet() -> str:
             selection-color: #FFFFFF;
             alternate-background-color: #F8FBFF;
             outline: 0;
+        }
+
+        QCalendarWidget QTableView {
+            background: #FFFFFF;
+            color: #0F172A;
+        }
+
+        QCalendarWidget QTableView#qt_calendar_calendarview QWidget#qt_scrollarea_viewport {
+            background: #FFFFFF;
+            color: #0F172A;
+        }
+
+        QCalendarWidget QTableView#qt_calendar_calendarview QHeaderView::section {
+            background: #F8FBFF;
+            color: #0F172A;
+            border: none;
+            border-bottom: 1px solid #C7D8EE;
+            padding: 6px 0px;
+            font-weight: 700;
         }
 
         QCalendarWidget QAbstractItemView:disabled {
