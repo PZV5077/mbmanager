@@ -2,7 +2,20 @@ from __future__ import annotations
 
 from PySide6.QtCore import QDate, QDateTime, QEvent, Qt, QTime, QUrl, Signal
 from PySide6.QtGui import QDesktopServices
-from PySide6.QtWidgets import QDateEdit, QDateTimeEdit, QHBoxLayout, QLineEdit, QToolButton, QWidget
+from PySide6.QtWidgets import (
+    QApplication,
+    QCalendarWidget,
+    QDialog,
+    QFrame,
+    QHBoxLayout,
+    QLabel,
+    QLineEdit,
+    QPushButton,
+    QSpinBox,
+    QToolButton,
+    QVBoxLayout,
+    QWidget,
+)
 
 from .utils import parse_date, parse_datetime
 
@@ -20,69 +33,268 @@ def normalize_web_url(value: str) -> str | None:
     return None
 
 
+def _current_minute_datetime() -> QDateTime:
+    now = QDateTime.currentDateTime()
+    return QDateTime(now.date(), QTime(now.time().hour(), now.time().minute()))
+
+
+class _DateTimePopup(QDialog):
+    def __init__(self, initial_value: QDateTime, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self._cleared = False
+
+        self.setWindowFlags(Qt.WindowType.Popup)
+        self.setWindowTitle("DateTime")
+        self.setObjectName("dateTimePopup")
+
+        self.calendar = QCalendarWidget(self)
+        self.calendar.setGridVisible(False)
+        self.calendar.setSelectedDate(initial_value.date())
+        self.calendar.setVerticalHeaderFormat(QCalendarWidget.VerticalHeaderFormat.NoVerticalHeader)
+        self.calendar.setStyleSheet(_calendar_popup_stylesheet())
+
+        time_wrap = QFrame(self)
+        time_layout = QHBoxLayout(time_wrap)
+        time_layout.setContentsMargins(0, 0, 0, 0)
+        time_layout.setSpacing(6)
+
+        hour_label = QLabel("Hour", time_wrap)
+        self.hour_spin = QSpinBox(time_wrap)
+        self.hour_spin.setRange(0, 23)
+        self.hour_spin.setValue(initial_value.time().hour())
+
+        minute_label = QLabel("Minute", time_wrap)
+        self.minute_spin = QSpinBox(time_wrap)
+        self.minute_spin.setRange(0, 59)
+        self.minute_spin.setValue(initial_value.time().minute())
+
+        time_layout.addWidget(hour_label)
+        time_layout.addWidget(self.hour_spin)
+        time_layout.addSpacing(8)
+        time_layout.addWidget(minute_label)
+        time_layout.addWidget(self.minute_spin)
+        time_layout.addStretch(1)
+
+        self.clear_btn = QPushButton("Clear", self)
+        self.clear_btn.clicked.connect(self._clear_and_accept)
+
+        self.now_btn = QPushButton("Now", self)
+        self.now_btn.clicked.connect(self._set_now)
+
+        self.apply_btn = QPushButton("Apply", self)
+        self.apply_btn.clicked.connect(self.accept)
+
+        self.cancel_btn = QPushButton("Cancel", self)
+        self.cancel_btn.clicked.connect(self.reject)
+
+        btn_row = QHBoxLayout()
+        btn_row.setContentsMargins(0, 0, 0, 0)
+        btn_row.setSpacing(6)
+        btn_row.addWidget(self.clear_btn)
+        btn_row.addWidget(self.now_btn)
+        btn_row.addStretch(1)
+        btn_row.addWidget(self.cancel_btn)
+        btn_row.addWidget(self.apply_btn)
+
+        root = QVBoxLayout(self)
+        root.setContentsMargins(8, 8, 8, 8)
+        root.setSpacing(8)
+        root.addWidget(self.calendar)
+        root.addWidget(time_wrap)
+        root.addLayout(btn_row)
+
+        self.resize(360, 340)
+
+    @property
+    def cleared(self) -> bool:
+        return self._cleared
+
+    def selected_datetime(self) -> QDateTime:
+        selected_date = self.calendar.selectedDate()
+        selected_time = QTime(self.hour_spin.value(), self.minute_spin.value())
+        return QDateTime(selected_date, selected_time)
+
+    def _clear_and_accept(self) -> None:
+        self._cleared = True
+        self.accept()
+
+    def _set_now(self) -> None:
+        current = _current_minute_datetime()
+        self.calendar.setSelectedDate(current.date())
+        self.hour_spin.setValue(current.time().hour())
+        self.minute_spin.setValue(current.time().minute())
+
+
+def _calendar_popup_stylesheet() -> str:
+    mode = "light"
+    app = QApplication.instance()
+    if app is not None and isinstance(app, QApplication):
+        mode = str(app.property("theme_mode") or "light")
+
+    if mode == "dark":
+        return """
+            QCalendarWidget {
+                border: 1px solid #334155;
+                background: #0F172A;
+            }
+
+            QCalendarWidget QWidget#qt_calendar_navigationbar {
+                background: #172338;
+                border-bottom: 1px solid #334155;
+            }
+
+            QCalendarWidget QToolButton {
+                color: #E2E8F0;
+                background: transparent;
+                border: none;
+                padding: 6px;
+                min-width: 28px;
+                font-weight: 600;
+            }
+
+            QCalendarWidget QToolButton:hover {
+                background: #24324A;
+                border-radius: 4px;
+            }
+
+            QCalendarWidget QMenu {
+                background: #111827;
+                color: #E5E7EB;
+                border: 1px solid #334155;
+            }
+
+            QCalendarWidget QSpinBox {
+                color: #E2E8F0;
+                background: #0F172A;
+                border: 1px solid #334155;
+                selection-background-color: #0369A1;
+            }
+
+            QCalendarWidget QAbstractItemView:enabled {
+                background: #111827;
+                color: #E2E8F0;
+                selection-background-color: #0369A1;
+                selection-color: #F8FAFC;
+                alternate-background-color: #1E293B;
+                outline: 0;
+            }
+
+            QCalendarWidget QAbstractItemView:disabled {
+                color: #64748B;
+            }
+        """
+
+    return """
+        QCalendarWidget {
+            border: 1px solid #C7D8EE;
+            background: #FFFFFF;
+        }
+
+        QCalendarWidget QWidget#qt_calendar_navigationbar {
+            background: #F0F7FF;
+            border-bottom: 1px solid #C7D8EE;
+        }
+
+        QCalendarWidget QToolButton {
+            color: #0F172A;
+            background: transparent;
+            border: none;
+            padding: 6px;
+            min-width: 28px;
+            font-weight: 600;
+        }
+
+        QCalendarWidget QToolButton:hover {
+            background: #E0F2FE;
+            border-radius: 4px;
+        }
+
+        QCalendarWidget QMenu {
+            background: #FFFFFF;
+            color: #0F172A;
+            border: 1px solid #B7CCE6;
+        }
+
+        QCalendarWidget QSpinBox {
+            color: #0F172A;
+            background: #FFFFFF;
+            border: 1px solid #B7CCE6;
+            selection-background-color: #0EA5E9;
+        }
+
+        QCalendarWidget QAbstractItemView:enabled {
+            background: #FFFFFF;
+            color: #0F172A;
+            selection-background-color: #0EA5E9;
+            selection-color: #FFFFFF;
+            alternate-background-color: #F8FBFF;
+            outline: 0;
+        }
+
+        QCalendarWidget QAbstractItemView:disabled {
+            color: #94A3B8;
+        }
+    """
+
+
 class NullableDateTimeWidget(QWidget):
     textChanged = Signal(str)
 
     def __init__(self, value: str = "", parent: QWidget | None = None) -> None:
         super().__init__(parent)
-        self._updating = False
-        self._min = QDateTime(QDate(2000, 1, 1), QTime(0, 0))
+        self._value: QDateTime | None = None
 
-        self.edit = QDateTimeEdit(self)
-        self.edit.setCalendarPopup(True)
-        self.edit.setDisplayFormat("yyyy-MM-dd HH:mm")
-        self.edit.setSpecialValueText(" ")
-        self.edit.setMinimumDateTime(self._min)
-        self.edit.setDateTime(self._min)
-        self._calendar = self.edit.calendarWidget()
-        self._calendar.installEventFilter(self)
-
-        self.clear_btn = QToolButton(self)
-        self.clear_btn.setText("x")
-        self.clear_btn.setAutoRaise(True)
-        self.clear_btn.setToolTip("Clear datetime")
+        self.edit = QLineEdit(self)
+        self.edit.setReadOnly(True)
+        self.edit.setPlaceholderText("yyyy-MM-dd HH:mm")
+        self.edit.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.edit.installEventFilter(self)
 
         layout = QHBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(2)
-        layout.addWidget(self.edit)
-        layout.addWidget(self.clear_btn)
+        layout.setSpacing(0)
+        layout.addWidget(self.edit, 1)
 
         self.setFocusProxy(self.edit)
         self.set_text(value)
-        self.edit.dateTimeChanged.connect(self._emit)
-        self.clear_btn.clicked.connect(self.clear)
+
+    def eventFilter(self, watched: object, event: QEvent) -> bool:
+        if watched is self.edit and event.type() in {QEvent.Type.MouseButtonPress, QEvent.Type.MouseButtonDblClick}:
+            self._open_popup()
+            return True
+        return super().eventFilter(watched, event)
 
     def set_text(self, value: str) -> None:
-        self._updating = True
-        try:
-            dt = parse_datetime(value)
-            if dt is None:
-                self.edit.setDateTime(self._min)
-            else:
-                self.edit.setDateTime(QDateTime(QDate(dt.year, dt.month, dt.day), QTime(dt.hour, dt.minute)))
-        finally:
-            self._updating = False
+        parsed = parse_datetime(value)
+        if parsed is None:
+            self._value = None
+            self.edit.clear()
+            return
+        self._value = QDateTime(QDate(parsed.year, parsed.month, parsed.day), QTime(parsed.hour, parsed.minute))
+        self.edit.setText(self._value.toString("yyyy-MM-dd HH:mm"))
 
     def text(self) -> str:
-        if self.edit.dateTime() == self._min:
+        if self._value is None:
             return ""
-        return self.edit.dateTime().toString("yyyy-MM-dd HH:mm")
+        return self._value.toString("yyyy-MM-dd HH:mm")
 
     def clear(self) -> None:
-        self.set_text("")
+        self._value = None
+        self.edit.clear()
         self.textChanged.emit("")
 
-    def _emit(self) -> None:
-        if not self._updating:
-            self.textChanged.emit(self.text())
-
-    def eventFilter(self, obj: object, event: QEvent) -> bool:
-        if obj is self._calendar and event.type() == QEvent.Type.Show and self.edit.dateTime() == self._min:
-            now = QDate.currentDate()
-            self._calendar.setCurrentPage(now.year(), now.month())
-            self._calendar.setSelectedDate(now)
-        return super().eventFilter(obj, event)
+    def _open_popup(self) -> None:
+        initial = self._value or _current_minute_datetime()
+        popup = _DateTimePopup(initial, self)
+        popup.move(self.edit.mapToGlobal(self.edit.rect().bottomLeft()))
+        if popup.exec() != QDialog.DialogCode.Accepted:
+            return
+        if popup.cleared:
+            self.clear()
+            return
+        self._value = popup.selected_datetime()
+        self.edit.setText(self._value.toString("yyyy-MM-dd HH:mm"))
+        self.textChanged.emit(self.text())
 
 
 class NullableDateWidget(QWidget):
@@ -90,64 +302,60 @@ class NullableDateWidget(QWidget):
 
     def __init__(self, value: str = "", parent: QWidget | None = None) -> None:
         super().__init__(parent)
-        self._min = QDate(2000, 1, 1)
-        self._updating = False
+        self._value: QDate | None = None
 
-        self.edit = QDateEdit(self)
-        self.edit.setCalendarPopup(True)
-        self.edit.setDisplayFormat("dd/MM/yy")
-        self.edit.setSpecialValueText(" ")
-        self.edit.setMinimumDate(self._min)
-        self.edit.setDate(self._min)
-        self._calendar = self.edit.calendarWidget()
-        self._calendar.installEventFilter(self)
+        self.edit = QLineEdit(self)
+        self.edit.setReadOnly(True)
+        self.edit.setPlaceholderText("dd/MM/yy")
+        self.edit.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.edit.installEventFilter(self)
 
-        self.clear_btn = QToolButton(self)
-        self.clear_btn.setText("x")
-        self.clear_btn.setAutoRaise(True)
-        self.clear_btn.setToolTip("Clear date")
-
-        lay = QHBoxLayout(self)
-        lay.setContentsMargins(0, 0, 0, 0)
-        lay.setSpacing(2)
-        lay.addWidget(self.edit)
-        lay.addWidget(self.clear_btn)
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
+        layout.addWidget(self.edit, 1)
 
         self.setFocusProxy(self.edit)
         self.set_text(value)
-        self.edit.dateChanged.connect(self._emit)
-        self.clear_btn.clicked.connect(self.clear)
+
+    def eventFilter(self, watched: object, event: QEvent) -> bool:
+        if watched is self.edit and event.type() in {QEvent.Type.MouseButtonPress, QEvent.Type.MouseButtonDblClick}:
+            self._open_popup()
+            return True
+        return super().eventFilter(watched, event)
 
     def set_text(self, value: str) -> None:
-        self._updating = True
-        try:
-            dt = parse_date(value)
-            if dt is None:
-                self.edit.setDate(self._min)
-            else:
-                self.edit.setDate(QDate(dt.year, dt.month, dt.day))
-        finally:
-            self._updating = False
+        parsed = parse_date(value)
+        if parsed is None:
+            self._value = None
+            self.edit.clear()
+            return
+        self._value = QDate(parsed.year, parsed.month, parsed.day)
+        self.edit.setText(self._value.toString("dd/MM/yy"))
 
     def text(self) -> str:
-        if self.edit.date() == self._min:
+        if self._value is None:
             return ""
-        return self.edit.date().toString("dd/MM/yy")
+        return self._value.toString("dd/MM/yy")
 
     def clear(self) -> None:
-        self.set_text("")
+        self._value = None
+        self.edit.clear()
         self.textChanged.emit("")
 
-    def _emit(self) -> None:
-        if not self._updating:
-            self.textChanged.emit(self.text())
-
-    def eventFilter(self, obj: object, event: QEvent) -> bool:
-        if obj is self._calendar and event.type() == QEvent.Type.Show and self.edit.date() == self._min:
-            today = QDate.currentDate()
-            self._calendar.setCurrentPage(today.year(), today.month())
-            self._calendar.setSelectedDate(today)
-        return super().eventFilter(obj, event)
+    def _open_popup(self) -> None:
+        initial_date = self._value or QDate.currentDate()
+        initial = QDateTime(initial_date, _current_minute_datetime().time())
+        popup = _DateTimePopup(initial, self)
+        popup.move(self.edit.mapToGlobal(self.edit.rect().bottomLeft()))
+        if popup.exec() != QDialog.DialogCode.Accepted:
+            return
+        if popup.cleared:
+            self.clear()
+            return
+        self._value = popup.selected_datetime().date()
+        self.edit.setText(self._value.toString("dd/MM/yy"))
+        self.textChanged.emit(self.text())
 
 
 class LinkLineWidget(QWidget):

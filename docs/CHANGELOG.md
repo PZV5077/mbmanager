@@ -44,3 +44,13 @@
 ### Maintenance
 - Cleaned Python cache artifacts from the app folder.
 - Verified with compile checks and offscreen startup/theme-toggle smoke runs.
+
+### UX Patch - Date/Time Popup Upgrade
+- Removed secondary calendar expansion behavior in date editing popups.
+- Replaced popup editor internals with an always-visible inline calendar layout.
+- Added explicit hour/minute controls next to the calendar for faster precise input.
+- Kept quick action buttons in popup flow:
+  - Clear (reset value)
+  - Now (set current local date/time)
+- Kept click-to-open behavior directly on date/datetime cells.
+- Added modern calendar styling for both light and dark themes inside popup dialogs.
