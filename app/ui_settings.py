@@ -73,3 +73,15 @@ class UiSettingsStore:
         data = self.load()
         data["font_scale"] = max(50, min(200, scale))
         self.save(data)
+
+    def get_theme_mode(self, default: str = "light") -> str:
+        data = self.load()
+        mode = data.get("theme_mode")
+        if mode in {"light", "dark"}:
+            return str(mode)
+        return default
+
+    def set_theme_mode(self, mode: str) -> None:
+        data = self.load()
+        data["theme_mode"] = "dark" if mode == "dark" else "light"
+        self.save(data)

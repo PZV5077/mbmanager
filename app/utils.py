@@ -1,38 +1,36 @@
 from __future__ import annotations
 
+import ast
+import operator
 import platform
+import re
 from datetime import datetime
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
+from typing import Callable
 from uuid import uuid4
+
+from .constants import DATE_TIME_FMT
 
 DATE_FMT = "%d/%m/%y"
 
 
 def get_data_dir() -> Path:
-    """获取平台特定的数据目录
-    
-    Linux: ~/文档/mbmanager_data/ 或 ~/Documents/mbmanager_data/ 或 ~/.mbmanager_data/ (备选)
-    Windows: ./mbmanager_data/
-    其他: ~/.mbmanager_data/
-    """
+    """获取平台特定的数据目录。"""
     system = platform.system()
-    
+
     if system == "Linux":
         home = Path.home()
-        # 优先检查常见的 Documents 目录名（按优先级）
         for docs_folder in ["文档", "Documents"]:
             docs_dir = home / docs_folder
             if docs_dir.exists():
                 return docs_dir / "mbmanager_data"
-        # 备选方案：~/.mbmanager_data/
         return home / ".mbmanager_data"
-    elif system == "Windows":
-        # Windows 使用当前目录下的 mbmanager_data/
+
+    if system == "Windows":
         return Path.cwd() / "mbmanager_data"
-    else:
-        # 其他系统使用 ~/.mbmanager_data/
-        return Path.home() / ".mbmanager_data"
+
+    return Path.home() / ".mbmanager_data"
 
 
 def new_id() -> str:
@@ -53,6 +51,16 @@ def parse_date(text: str) -> datetime | None:
         return None
 
 
+def parse_datetime(text: str) -> datetime | None:
+    text = (text or "").strip()
+    if not text:
+        return None
+    try:
+        return datetime.strptime(text, DATE_TIME_FMT)
+    except ValueError:
+        return None
+
+
 def parse_decimal(text: str) -> Decimal | None:
     text = (text or "").strip()
     if not text:
@@ -67,34 +75,64 @@ def fmt_decimal(value: Decimal | None) -> str:
     if value is None:
         return ""
     value = value.quantize(Decimal("0.01"))
-    s = format(value, "f")
-    if "." in s:
-        s = s.rstrip("0").rstrip(".")
-    return s
+    out = format(value, "f")
+    if "." in out:
+        out = out.rstrip("0").rstrip(".")
+    return out
 
 
 def has_negative(*values: str) -> bool:
     for value in values:
-        d = parse_decimal(value)
-        if d is not None and d < 0:
+        dec = parse_decimal(value)
+        if dec is not None and dec < 0:
             return True
     return False
 
 
-BETTING_STATUS_ORDER = {
-    "NotStarted": 0,
-    "NeedDeposit": 1,
-    "NeedQB1": 2,
-    "WaitQB1Settle": 3,
-    "NeedQB2": 4,
-    "WaitQB2Settle": 5,
-    "NeedBonus": 6,
-    "WaitBonusSettle": 7,
-    "NeedWithdraw": 8,
-    "WaitBank": 9,
-    "Done": 10,
-    "Error": 11,
-}
+def evaluate_profit_expression(text: str) -> str:
+    expr = (text or "").strip()
+    if not expr:
+        return ""
+
+    direct = parse_decimal(expr)
+    if direct is not None:
+        return fmt_decimal(direct)
+
+    if not re.fullmatch(r"[0-9+\-*/().\s]+", expr):
+        raise ValueError("Profit expression contains invalid characters")
+
+    node = ast.parse(expr, mode="eval")
+    result = _eval_profit_ast(node.body)
+    return fmt_decimal(result)
+
+
+def _eval_profit_ast(node: ast.AST) -> Decimal:
+    bin_ops: dict[type[ast.AST], Callable[[Decimal, Decimal], Decimal]] = {
+        ast.Add: operator.add,
+        ast.Sub: operator.sub,
+        ast.Mult: operator.mul,
+        ast.Div: operator.truediv,
+    }
+    unary_ops: dict[type[ast.AST], Callable[[Decimal], Decimal]] = {
+        ast.UAdd: lambda v: v,
+        ast.USub: lambda v: -v,
+    }
+
+    if isinstance(node, ast.BinOp) and type(node.op) in bin_ops:
+        left = _eval_profit_ast(node.left)
+        right = _eval_profit_ast(node.right)
+        if isinstance(node.op, ast.Div) and right == 0:
+            raise ValueError("Division by zero in profit expression")
+        return Decimal(str(bin_ops[type(node.op)](left, right)))
+
+    if isinstance(node, ast.UnaryOp) and type(node.op) in unary_ops:
+        return Decimal(str(unary_ops[type(node.op)](_eval_profit_ast(node.operand))))
+
+    if isinstance(node, ast.Constant) and isinstance(node.value, (int, float)):
+        return Decimal(str(node.value))
+
+    raise ValueError("Unsupported profit expression")
+
 
 CASINO_STATUS_ORDER = {
     "NotStarted": 0,
@@ -106,18 +144,54 @@ CASINO_STATUS_ORDER = {
 }
 
 
+def _is_yes(value: str) -> bool:
+    return (value or "").strip().lower() in {"yes", "true", "1", "y"}
+
+
 def compute_betting_status(rec: dict[str, str]) -> str:
-    if has_negative(rec.get("deposit_amount", ""), rec.get("qb1_amount", ""), rec.get("qb2_amount", ""), rec.get("bonus_amount", ""), rec.get("final_amount", "")):
+    # New SQLite schema status flow.
+    if {"q_is_placed", "q_is_completed", "b_is_placed", "b_is_completed", "bank"}.issubset(rec.keys()):
+        if rec.get("bank") == "Issue":
+            return "Error"
+        if has_negative(rec.get("deposit_amount", ""), rec.get("q_amount", ""), rec.get("b_amount", "")):
+            return "Error"
+
+        has_identity = any((rec.get(field, "") or "").strip() for field in ("start_at", "bookie", "promo_name"))
+        if not has_identity:
+            return "NotStarted"
+
+        if not _is_yes(rec.get("q_is_placed", "No")):
+            return "NeedQBet"
+        if not _is_yes(rec.get("q_is_completed", "No")):
+            return "WaitQResult"
+        if not _is_yes(rec.get("b_is_placed", "No")):
+            return "NeedBBet"
+        if not _is_yes(rec.get("b_is_completed", "No")):
+            return "WaitBResult"
+        if rec.get("bank") != "Rec":
+            return "NeedBank"
+        return "Done"
+
+    # Legacy CSV schema fallback.
+    if has_negative(
+        rec.get("deposit_amount", ""),
+        rec.get("qb1_amount", ""),
+        rec.get("qb2_amount", ""),
+        rec.get("bonus_amount", ""),
+        rec.get("final_amount", ""),
+    ):
         return "Error"
     if rec.get("bank_status") == "Issue":
         return "Error"
-    has_qb2_payload = any((rec.get(f, "") or "").strip() for f in ("qb2_type", "qb2_amount", "qb2_date"))
+
+    has_qb2_payload = any((rec.get(field, "") or "").strip() for field in ("qb2_type", "qb2_amount", "qb2_date"))
     if rec.get("has_qb2") == "No" and (has_qb2_payload or rec.get("qb2_settled") == "Yes"):
         return "Error"
     if not (rec.get("bookie", "") or "").strip():
         return "NotStarted"
     if not (rec.get("deposit_amount", "") or "").strip():
         return "NeedDeposit"
+
     qb1_settled = rec.get("qb1_settled", "No") == "Yes"
     if not qb1_settled:
         if not (rec.get("qb1_type", "") or "").strip() or not (rec.get("qb1_amount", "") or "").strip():
@@ -173,9 +247,19 @@ def compute_casino_status(rec: dict[str, str]) -> str:
 def status_color(status: str) -> str:
     if status == "NotStarted":
         return "#9CA3AF"
-    if status in {"NeedDeposit", "NeedQB1", "NeedQB2", "NeedBonus", "NeedWithdraw", "NeedFinal"}:
+    if status in {
+        "NeedDeposit",
+        "NeedQB1",
+        "NeedQB2",
+        "NeedBonus",
+        "NeedWithdraw",
+        "NeedFinal",
+        "NeedQBet",
+        "NeedBBet",
+        "NeedBank",
+    }:
         return "#F59E0B"
-    if status in {"WaitQB1Settle", "WaitQB2Settle", "WaitBonusSettle", "WaitBank"}:
+    if status in {"WaitQB1Settle", "WaitQB2Settle", "WaitBonusSettle", "WaitBank", "WaitQResult", "WaitBResult"}:
         return "#3B82F6"
     if status == "Done":
         return "#16A34A"

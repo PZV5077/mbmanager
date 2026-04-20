@@ -1,10 +1,10 @@
 from __future__ import annotations
 
-from PySide6.QtCore import QDate, QEvent, Qt, QUrl, Signal
+from PySide6.QtCore import QDate, QDateTime, QEvent, Qt, QTime, QUrl, Signal
 from PySide6.QtGui import QDesktopServices
-from PySide6.QtWidgets import QDateEdit, QHBoxLayout, QLineEdit, QToolButton, QWidget
+from PySide6.QtWidgets import QDateEdit, QDateTimeEdit, QHBoxLayout, QLineEdit, QToolButton, QWidget
 
-from .utils import parse_date
+from .utils import parse_date, parse_datetime
 
 
 def normalize_web_url(value: str) -> str | None:
@@ -20,6 +20,71 @@ def normalize_web_url(value: str) -> str | None:
     return None
 
 
+class NullableDateTimeWidget(QWidget):
+    textChanged = Signal(str)
+
+    def __init__(self, value: str = "", parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self._updating = False
+        self._min = QDateTime(QDate(2000, 1, 1), QTime(0, 0))
+
+        self.edit = QDateTimeEdit(self)
+        self.edit.setCalendarPopup(True)
+        self.edit.setDisplayFormat("yyyy-MM-dd HH:mm")
+        self.edit.setSpecialValueText(" ")
+        self.edit.setMinimumDateTime(self._min)
+        self.edit.setDateTime(self._min)
+        self._calendar = self.edit.calendarWidget()
+        self._calendar.installEventFilter(self)
+
+        self.clear_btn = QToolButton(self)
+        self.clear_btn.setText("x")
+        self.clear_btn.setAutoRaise(True)
+        self.clear_btn.setToolTip("Clear datetime")
+
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(2)
+        layout.addWidget(self.edit)
+        layout.addWidget(self.clear_btn)
+
+        self.setFocusProxy(self.edit)
+        self.set_text(value)
+        self.edit.dateTimeChanged.connect(self._emit)
+        self.clear_btn.clicked.connect(self.clear)
+
+    def set_text(self, value: str) -> None:
+        self._updating = True
+        try:
+            dt = parse_datetime(value)
+            if dt is None:
+                self.edit.setDateTime(self._min)
+            else:
+                self.edit.setDateTime(QDateTime(QDate(dt.year, dt.month, dt.day), QTime(dt.hour, dt.minute)))
+        finally:
+            self._updating = False
+
+    def text(self) -> str:
+        if self.edit.dateTime() == self._min:
+            return ""
+        return self.edit.dateTime().toString("yyyy-MM-dd HH:mm")
+
+    def clear(self) -> None:
+        self.set_text("")
+        self.textChanged.emit("")
+
+    def _emit(self) -> None:
+        if not self._updating:
+            self.textChanged.emit(self.text())
+
+    def eventFilter(self, obj: object, event: QEvent) -> bool:
+        if obj is self._calendar and event.type() == QEvent.Type.Show and self.edit.dateTime() == self._min:
+            now = QDate.currentDate()
+            self._calendar.setCurrentPage(now.year(), now.month())
+            self._calendar.setSelectedDate(now)
+        return super().eventFilter(obj, event)
+
+
 class NullableDateWidget(QWidget):
     textChanged = Signal(str)
 
@@ -31,8 +96,6 @@ class NullableDateWidget(QWidget):
         self.edit = QDateEdit(self)
         self.edit.setCalendarPopup(True)
         self.edit.setDisplayFormat("dd/MM/yy")
-        # Qt may render minimum date when special text is truly empty.
-        # Use a single space so empty values stay visually blank.
         self.edit.setSpecialValueText(" ")
         self.edit.setMinimumDate(self._min)
         self.edit.setDate(self._min)
