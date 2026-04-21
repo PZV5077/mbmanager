@@ -36,6 +36,7 @@
 - Kept a legacy capability snapshot for future redesign:
   - docs/reload_offer_legacy_spec.md
 - Removed obsolete Reload Offer runtime files no longer referenced by active flow.
+- Confirmed no runtime Python references to Reload Offer remain; only the legacy snapshot document is retained.
 
 ### Version and Branding
 - Updated visible product version and title to 2.0.1.
@@ -61,3 +62,32 @@
 - Hardened date popup theming by styling the popup shell (`QDialog#dateTimePopup`) and calendar internals together.
 - Added explicit palette synchronization for calendar view, viewport, and weekday/header rows to prevent Wayland post-show color fallback.
 - Fixed weekday row background in month view by setting `QPalette.AlternateBase` (and disabled group equivalents) in light mode.
+
+### UI Patch - Qt Material System Migration
+- Switched the global theme engine from custom full-QSS to `qt-material` (`dark_blue.xml` / `light_blue.xml`).
+- Added a concise project overlay stylesheet for consistent tabs, tables, danger actions, and panel metadata labels.
+- Changed default first-launch theme to dark mode for a calm deep-blue workspace.
+- Updated settings page styling from inline hardcoded colors to semantic properties (`role`, `variant`) to keep visuals cohesive.
+- Synced date popup palette and color tokens with the new deep-blue visual language while preserving Wayland fallback protections.
+
+### UI Patch - Phase 2 Workspace Hierarchy
+- Reworked Betting and Casino tab headers into structured sections: title/subtitle, metric chips, filter bar, and action bar.
+- Introduced reusable semantic styling roles for workspace controls (`panelSubtitle`, `sectionLabel`, `fieldLabel`, `metricChip`).
+- Standardized button hierarchy with variants (`primary`, `secondary`, `ghost`, `danger`) for clearer action priority.
+- Unified ledger table editor density by adding dedicated cell-editor styling hooks for line edits, combos, and toggles.
+- Added live header metrics (visible, pending/waiting, done, selected) and sort-state hints to improve scanning speed.
+
+### UI Patch - Phase 3 Status Semantics & Feedback
+- Added a shared status-semantics layer (`action`, `progress`, `success`, `risk`, `neutral`) for both Betting and Casino workflows.
+- Unified status-cell colors and text contrast through centralized helpers so both tabs render identical semantic feedback.
+- Upgraded header chips to semantic counters (Action, In Progress, Done, Risk) with consistent visual states.
+- Added visibility hints for idle/selected rows to improve operational awareness during batch edits.
+
+### UI Patch - Phase 4 Micro Motion
+- Added a minimal fade-in animation to the date/time popup so the interaction feels responsive without adding visual noise.
+- Kept the motion scoped to the popup shell to avoid changing primary workspace behavior.
+
+### UI Patch - Phase 5 Linux and Wayland Verification
+- Re-checked visual regressions on Linux-focused startup paths and preserved the explicit Wayland popup refresh path.
+- Kept the theme/popup smoke flow aligned with offscreen validation before packaging.
+- Confirmed the release notes still keep the legacy Reload Offer snapshot documented while excluding the runtime entry.

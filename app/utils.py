@@ -7,7 +7,7 @@ import re
 from datetime import datetime
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
-from typing import Callable
+from typing import Callable, Literal
 from uuid import uuid4
 
 from .constants import DATE_TIME_FMT
@@ -143,6 +143,33 @@ CASINO_STATUS_ORDER = {
     "Error": 5,
 }
 
+StatusTone = Literal["neutral", "warning", "info", "success", "error"]
+StatusFeedbackGroup = Literal["neutral", "action", "progress", "success", "risk"]
+
+_STATUS_ACTION: set[str] = {
+    "NeedDeposit",
+    "NeedQB1",
+    "NeedQB2",
+    "NeedBonus",
+    "NeedWithdraw",
+    "NeedFinal",
+    "NeedQBet",
+    "NeedBBet",
+    "NeedBank",
+}
+
+_STATUS_PROGRESS: set[str] = {
+    "WaitQB1Settle",
+    "WaitQB2Settle",
+    "WaitBonusSettle",
+    "WaitBank",
+    "WaitQResult",
+    "WaitBResult",
+}
+
+_STATUS_SUCCESS: set[str] = {"Done"}
+_STATUS_RISK: set[str] = {"Error"}
+
 
 def _is_yes(value: str) -> bool:
     return (value or "").strip().lower() in {"yes", "true", "1", "y"}
@@ -244,25 +271,52 @@ def compute_casino_status(rec: dict[str, str]) -> str:
     return "Done"
 
 
+def status_tone(status: str) -> StatusTone:
+    if status in _STATUS_RISK:
+        return "error"
+    if status in _STATUS_SUCCESS:
+        return "success"
+    if status in _STATUS_PROGRESS:
+        return "info"
+    if status in _STATUS_ACTION:
+        return "warning"
+    return "neutral"
+
+
+def status_feedback_group(status: str) -> StatusFeedbackGroup:
+    tone = status_tone(status)
+    if tone == "error":
+        return "risk"
+    if tone == "success":
+        return "success"
+    if tone == "info":
+        return "progress"
+    if tone == "warning":
+        return "action"
+    return "neutral"
+
+
 def status_color(status: str) -> str:
-    if status == "NotStarted":
-        return "#9CA3AF"
-    if status in {
-        "NeedDeposit",
-        "NeedQB1",
-        "NeedQB2",
-        "NeedBonus",
-        "NeedWithdraw",
-        "NeedFinal",
-        "NeedQBet",
-        "NeedBBet",
-        "NeedBank",
-    }:
-        return "#F59E0B"
-    if status in {"WaitQB1Settle", "WaitQB2Settle", "WaitBonusSettle", "WaitBank", "WaitQResult", "WaitBResult"}:
-        return "#3B82F6"
-    if status == "Done":
-        return "#16A34A"
-    if status == "Error":
-        return "#DC2626"
-    return "#9CA3AF"
+    tone = status_tone(status)
+    if tone == "warning":
+        return "#D97706"
+    if tone == "info":
+        return "#2563EB"
+    if tone == "success":
+        return "#15803D"
+    if tone == "error":
+        return "#B42318"
+    return "#94A3B8"
+
+
+def status_text_color(status: str) -> str:
+    tone = status_tone(status)
+    if tone == "neutral":
+        return "#0F172A"
+    if tone == "warning":
+        return "#FFF7ED"
+    if tone == "info":
+        return "#EFF6FF"
+    if tone == "success":
+        return "#ECFDF5"
+    return "#FEF2F2"

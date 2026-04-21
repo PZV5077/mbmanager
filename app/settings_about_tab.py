@@ -27,7 +27,7 @@ class SettingsAboutTab(QWidget):
         layout.setSpacing(12)
 
         title = QLabel("Matched Betting Manager v2.0.1", self)
-        title.setStyleSheet("font-size: 18px; font-weight: 800;")
+        title.setProperty("role", "panelTitle")
 
         intro = QLabel(
             "This release provides a modernized workspace UI with faster local data operations.",
@@ -50,32 +50,18 @@ class SettingsAboutTab(QWidget):
         db_path = self.data_dir / "mbmanager.db"
         db_label = QLabel(f"Database: {db_path}", self)
         db_label.setWordWrap(True)
-        db_label.setStyleSheet("color: #334155;")
+        db_label.setProperty("role", "metaInfo")
 
         data_dir_label = QLabel(f"Data Directory: {self.data_dir}", self)
         data_dir_label.setWordWrap(True)
-        data_dir_label.setStyleSheet("color: #334155;")
-
-        danger_style = (
-            "QPushButton {"
-            "border: 1px solid #7F1D1D;"
-            "color: #7F1D1D;"
-            "background: #FFF5F5;"
-            "padding: 7px 12px;"
-            "border-radius: 8px;"
-            "font-weight: 700;"
-            "}"
-            "QPushButton:hover {"
-            "background: #FEE2E2;"
-            "}"
-        )
+        data_dir_label.setProperty("role", "metaInfo")
 
         delete_db_btn = QPushButton("Delete Database", self)
-        delete_db_btn.setStyleSheet(danger_style)
+        delete_db_btn.setProperty("variant", "danger")
         delete_db_btn.clicked.connect(self._delete_database)
 
         delete_all_btn = QPushButton("Delete Database + UI Settings", self)
-        delete_all_btn.setStyleSheet(danger_style)
+        delete_all_btn.setProperty("variant", "danger")
         delete_all_btn.clicked.connect(self._delete_database_and_settings)
 
         actions = QHBoxLayout()

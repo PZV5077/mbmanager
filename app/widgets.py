@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from PySide6.QtCore import QDate, QDateTime, QEvent, Qt, QTime, QTimer, QUrl, Signal
+from PySide6.QtCore import QEasingCurve, QDate, QDateTime, QEvent, QPropertyAnimation, Qt, QTime, QTimer, QUrl, Signal
 from PySide6.QtGui import QColor, QDesktopServices, QPalette
 from PySide6.QtWidgets import (
     QApplication,
@@ -9,6 +9,7 @@ from PySide6.QtWidgets import (
     QFrame,
     QHeaderView,
     QHBoxLayout,
+    QGraphicsOpacityEffect,
     QLabel,
     QLineEdit,
     QPushButton,
@@ -50,19 +51,19 @@ def _is_dark_theme_mode() -> bool:
 def _apply_calendar_popup_palette(popup: QDialog, calendar: QCalendarWidget) -> None:
     dark = _is_dark_theme_mode()
     if dark:
-        panel_bg = QColor("#0F172A")
-        view_bg = QColor("#111827")
-        header_bg = QColor("#1E293B")
-        text = QColor("#E2E8F0")
-        highlight = QColor("#0369A1")
-        highlight_text = QColor("#F8FAFC")
-        disabled_text = QColor("#64748B")
+        panel_bg = QColor("#0D1526")
+        view_bg = QColor("#111C33")
+        header_bg = QColor("#152841")
+        text = QColor("#E5ECF8")
+        highlight = QColor("#1E3A8A")
+        highlight_text = QColor("#EAF1FF")
+        disabled_text = QColor("#6E809F")
     else:
-        panel_bg = QColor("#FFFFFF")
+        panel_bg = QColor("#F8FBFF")
         view_bg = QColor("#FFFFFF")
-        header_bg = QColor("#F8FBFF")
-        text = QColor("#0F172A")
-        highlight = QColor("#0EA5E9")
+        header_bg = QColor("#E8F0FF")
+        text = QColor("#172554")
+        highlight = QColor("#2563EB")
         highlight_text = QColor("#FFFFFF")
         disabled_text = QColor("#94A3B8")
 
@@ -113,6 +114,7 @@ class _DateTimePopup(QDialog):
     def __init__(self, initial_value: QDateTime, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self._cleared = False
+        self._fade_animation: QPropertyAnimation | None = None
 
         self.setWindowFlags(Qt.WindowType.Popup)
         self.setWindowTitle("DateTime")
@@ -177,16 +179,40 @@ class _DateTimePopup(QDialog):
         root.addLayout(btn_row)
 
         self.resize(360, 340)
+        self._prepare_fade_effect()
 
     def showEvent(self, event: QEvent) -> None:
         super().showEvent(event)
         # Wayland popup polish can override calendar view colors after show.
         self._refresh_theme()
+        self._play_fade_in()
         QTimer.singleShot(0, self._refresh_theme)
 
     def _refresh_theme(self) -> None:
         self.setStyleSheet(_calendar_popup_stylesheet())
         _apply_calendar_popup_palette(self, self.calendar)
+
+    def _prepare_fade_effect(self) -> None:
+        effect = QGraphicsOpacityEffect(self)
+        effect.setOpacity(1.0)
+        self.setGraphicsEffect(effect)
+
+    def _play_fade_in(self) -> None:
+        effect = self.graphicsEffect()
+        if not isinstance(effect, QGraphicsOpacityEffect):
+            return
+
+        if self._fade_animation is not None and self._fade_animation.state() == QPropertyAnimation.State.Running:
+            self._fade_animation.stop()
+
+        effect.setOpacity(0.0)
+        animation = QPropertyAnimation(effect, b"opacity", self)
+        animation.setDuration(120)
+        animation.setStartValue(0.0)
+        animation.setEndValue(1.0)
+        animation.setEasingCurve(QEasingCurve.Type.OutCubic)
+        animation.start()
+        self._fade_animation = animation
 
     @property
     def cleared(self) -> bool:
@@ -217,13 +243,13 @@ def _calendar_popup_stylesheet() -> str:
     if mode == "dark":
         return """
             QDialog#dateTimePopup {
-                background: #0F172A;
-                border: 1px solid #334155;
+                background: #0D1526;
+                border: 1px solid #314766;
                 border-radius: 10px;
             }
 
             QDialog#dateTimePopup QLabel {
-                color: #E2E8F0;
+                color: #E5ECF8;
             }
 
             QDialog#dateTimePopup QFrame {
@@ -231,17 +257,17 @@ def _calendar_popup_stylesheet() -> str:
             }
 
             QCalendarWidget {
-                border: 1px solid #334155;
-                background: #0F172A;
+                border: 1px solid #314766;
+                background: #111C33;
             }
 
             QCalendarWidget QWidget#qt_calendar_navigationbar {
-                background: #172338;
-                border-bottom: 1px solid #334155;
+                background: #152841;
+                border-bottom: 1px solid #273A57;
             }
 
             QCalendarWidget QToolButton {
-                color: #E2E8F0;
+                color: #E5ECF8;
                 background: transparent;
                 border: none;
                 padding: 6px;
@@ -250,65 +276,65 @@ def _calendar_popup_stylesheet() -> str:
             }
 
             QCalendarWidget QToolButton:hover {
-                background: #24324A;
+                background: #1F3C67;
                 border-radius: 4px;
             }
 
             QCalendarWidget QMenu {
-                background: #111827;
-                color: #E5E7EB;
-                border: 1px solid #334155;
+                background: #101A2E;
+                color: #E5ECF8;
+                border: 1px solid #314766;
             }
 
             QCalendarWidget QSpinBox {
-                color: #E2E8F0;
-                background: #0F172A;
-                border: 1px solid #334155;
-                selection-background-color: #0369A1;
+                color: #E5ECF8;
+                background: #111C33;
+                border: 1px solid #314766;
+                selection-background-color: #1E3A8A;
             }
 
             QCalendarWidget QAbstractItemView:enabled {
-                background: #111827;
-                color: #E2E8F0;
-                selection-background-color: #0369A1;
-                selection-color: #F8FAFC;
-                alternate-background-color: #1E293B;
+                background: #111C33;
+                color: #E5ECF8;
+                selection-background-color: #1E3A8A;
+                selection-color: #EAF1FF;
+                alternate-background-color: #152841;
                 outline: 0;
             }
 
             QCalendarWidget QTableView {
-                background: #111827;
-                color: #E2E8F0;
+                background: #111C33;
+                color: #E5ECF8;
             }
 
             QCalendarWidget QTableView#qt_calendar_calendarview QWidget#qt_scrollarea_viewport {
-                background: #111827;
-                color: #E2E8F0;
+                background: #111C33;
+                color: #E5ECF8;
             }
 
             QCalendarWidget QTableView#qt_calendar_calendarview QHeaderView::section {
-                background: #1E293B;
-                color: #E2E8F0;
+                background: #152841;
+                color: #E5ECF8;
                 border: none;
-                border-bottom: 1px solid #334155;
+                border-bottom: 1px solid #273A57;
                 padding: 6px 0px;
                 font-weight: 700;
             }
 
             QCalendarWidget QAbstractItemView:disabled {
-                color: #64748B;
+                color: #6E809F;
             }
         """
 
     return """
         QDialog#dateTimePopup {
-            background: #FFFFFF;
-            border: 1px solid #C7D8EE;
+            background: #F8FBFF;
+            border: 1px solid #C8D8EE;
             border-radius: 10px;
         }
 
         QDialog#dateTimePopup QLabel {
-            color: #0F172A;
+            color: #172554;
         }
 
         QDialog#dateTimePopup QFrame {
@@ -316,17 +342,17 @@ def _calendar_popup_stylesheet() -> str:
         }
 
         QCalendarWidget {
-            border: 1px solid #C7D8EE;
+            border: 1px solid #C8D8EE;
             background: #FFFFFF;
         }
 
         QCalendarWidget QWidget#qt_calendar_navigationbar {
-            background: #F0F7FF;
-            border-bottom: 1px solid #C7D8EE;
+            background: #E8F0FF;
+            border-bottom: 1px solid #D2E0F4;
         }
 
         QCalendarWidget QToolButton {
-            color: #0F172A;
+            color: #172554;
             background: transparent;
             border: none;
             padding: 6px;
@@ -335,47 +361,47 @@ def _calendar_popup_stylesheet() -> str:
         }
 
         QCalendarWidget QToolButton:hover {
-            background: #E0F2FE;
+            background: #DDE9FF;
             border-radius: 4px;
         }
 
         QCalendarWidget QMenu {
             background: #FFFFFF;
-            color: #0F172A;
-            border: 1px solid #B7CCE6;
+            color: #172554;
+            border: 1px solid #C8D8EE;
         }
 
         QCalendarWidget QSpinBox {
-            color: #0F172A;
+            color: #172554;
             background: #FFFFFF;
-            border: 1px solid #B7CCE6;
-            selection-background-color: #0EA5E9;
+            border: 1px solid #C8D8EE;
+            selection-background-color: #2563EB;
         }
 
         QCalendarWidget QAbstractItemView:enabled {
             background: #FFFFFF;
-            color: #0F172A;
-            selection-background-color: #0EA5E9;
-            selection-color: #FFFFFF;
-            alternate-background-color: #F8FBFF;
+            color: #172554;
+            selection-background-color: #DBEAFE;
+            selection-color: #1E3A8A;
+            alternate-background-color: #F4F8FF;
             outline: 0;
         }
 
         QCalendarWidget QTableView {
             background: #FFFFFF;
-            color: #0F172A;
+            color: #172554;
         }
 
         QCalendarWidget QTableView#qt_calendar_calendarview QWidget#qt_scrollarea_viewport {
             background: #FFFFFF;
-            color: #0F172A;
+            color: #172554;
         }
 
         QCalendarWidget QTableView#qt_calendar_calendarview QHeaderView::section {
-            background: #F8FBFF;
-            color: #0F172A;
+            background: #E8F0FF;
+            color: #172554;
             border: none;
-            border-bottom: 1px solid #C7D8EE;
+            border-bottom: 1px solid #D2E0F4;
             padding: 6px 0px;
             font-weight: 700;
         }

@@ -11,6 +11,7 @@ from PySide6.QtWidgets import (
     QAbstractItemView,
     QCheckBox,
     QComboBox,
+    QFrame,
     QHBoxLayout,
     QHeaderView,
     QLabel,
@@ -37,7 +38,16 @@ from .constants import (
 )
 from .storage import AppDatabase
 from .ui_settings import UiSettingsStore
-from .utils import compute_betting_status, evaluate_profit_expression, fmt_decimal, new_id, parse_decimal, status_color
+from .utils import (
+    compute_betting_status,
+    evaluate_profit_expression,
+    fmt_decimal,
+    new_id,
+    parse_decimal,
+    status_color,
+    status_feedback_group,
+    status_text_color,
+)
 from .widgets import LinkLineWidget, NullableDateTimeWidget, normalize_web_url
 
 
@@ -64,6 +74,7 @@ class BettingTab(QWidget):
         self._delete_snapshot_ids: list[str] = []
         self._startup_focus_pending = True
         self._applying_col_widths = False
+        self._last_visible_records: list[dict[str, str]] = []
         self.col_widths = self.ui_settings.get_column_widths("betting_v2", BETTING_COL_WIDTHS, len(BETTING_HEADERS))
 
         self.save_timer = QTimer(self)
@@ -83,62 +94,134 @@ class BettingTab(QWidget):
         title = QLabel("Betting Ledger", self)
         title.setProperty("role", "panelTitle")
 
+        subtitle = QLabel("Track qualifying and bonus legs with faster row-level editing.", self)
+        subtitle.setProperty("role", "panelSubtitle")
+
+        self.total_chip = QLabel(self)
+        self.action_chip = QLabel(self)
+        self.progress_chip = QLabel(self)
+        self.done_chip = QLabel(self)
+        self.risk_chip = QLabel(self)
+        for chip in (self.total_chip, self.action_chip, self.progress_chip, self.done_chip, self.risk_chip):
+            chip.setProperty("role", "metricChip")
+            chip.setProperty("state", "neutral")
+
+        header = QFrame(self)
+        header.setObjectName("workspaceHeader")
+        header_layout = QHBoxLayout(header)
+        header_layout.setContentsMargins(12, 10, 12, 10)
+        header_layout.setSpacing(8)
+
+        header_left = QVBoxLayout()
+        header_left.setContentsMargins(0, 0, 0, 0)
+        header_left.setSpacing(2)
+        header_left.addWidget(title)
+        header_left.addWidget(subtitle)
+
+        chip_row = QHBoxLayout()
+        chip_row.setContentsMargins(0, 0, 0, 0)
+        chip_row.setSpacing(6)
+        chip_row.addWidget(self.total_chip)
+        chip_row.addWidget(self.action_chip)
+        chip_row.addWidget(self.progress_chip)
+        chip_row.addWidget(self.done_chip)
+        chip_row.addWidget(self.risk_chip)
+
+        header_layout.addLayout(header_left, 1)
+        header_layout.addLayout(chip_row)
+
         self.search_edit = QLineEdit(self)
         self.search_edit.setPlaceholderText("Search Bookie / Promo / Notes / Bet Target")
+        self.search_edit.setProperty("role", "toolbarSearch")
         self.search_edit.textChanged.connect(self.render_table)
 
         self.status_filter = QComboBox(self)
         self.status_filter.addItems(["Any", *BETTING_STATUS_VALUES])
+        self.status_filter.setProperty("role", "toolbarSelect")
         self.status_filter.currentTextChanged.connect(self.render_table)
 
         self.bank_filter = QComboBox(self)
         self.bank_filter.addItems(["Any", *BETTING_BANK_VALUES])
+        self.bank_filter.setProperty("role", "toolbarSelect")
         self.bank_filter.currentTextChanged.connect(self.render_table)
 
         self.clear_filters_btn = QPushButton("Clear Filters", self)
+        self.clear_filters_btn.setProperty("variant", "ghost")
         self.clear_filters_btn.clicked.connect(self.clear_filters)
 
         self.undo_btn = QPushButton("Undo", self)
+        self.undo_btn.setProperty("variant", "ghost")
         self.undo_btn.clicked.connect(self.undo_last_change)
         self.undo_btn.setEnabled(False)
 
         self.redo_btn = QPushButton("Redo", self)
+        self.redo_btn.setProperty("variant", "ghost")
         self.redo_btn.clicked.connect(self.redo_last_change)
         self.redo_btn.setEnabled(False)
 
         self.add_btn = QPushButton("Add Record", self)
+        self.add_btn.setProperty("variant", "primary")
         self.add_btn.clicked.connect(self.add_record)
 
         self.copy_btn = QPushButton("Copy Selected", self)
+        self.copy_btn.setProperty("variant", "secondary")
         self.copy_btn.clicked.connect(self.copy_selected)
         self.copy_btn.pressed.connect(self._capture_copy_selection)
 
         self.delete_btn = QPushButton("Delete Selected", self)
+        self.delete_btn.setProperty("variant", "danger")
         self.delete_btn.clicked.connect(self.delete_selected)
         self.delete_btn.pressed.connect(self._capture_delete_selection)
 
-        top = QHBoxLayout()
-        top.addWidget(title)
-        top.addStretch(1)
-        top.addWidget(QLabel("Status", self))
-        top.addWidget(self.status_filter)
-        top.addWidget(QLabel("Bank", self))
-        top.addWidget(self.bank_filter)
-        top.addWidget(self.search_edit, 1)
-        top.addWidget(self.clear_filters_btn)
-        top.addWidget(self.undo_btn)
-        top.addWidget(self.redo_btn)
+        controls = QFrame(self)
+        controls.setObjectName("controlBar")
+        controls_layout = QHBoxLayout(controls)
+        controls_layout.setContentsMargins(10, 8, 10, 8)
+        controls_layout.setSpacing(8)
 
-        actions = QHBoxLayout()
-        actions.addStretch(1)
-        actions.addWidget(self.add_btn)
-        actions.addWidget(self.copy_btn)
-        actions.addWidget(self.delete_btn)
+        filters_label = QLabel("Filters", controls)
+        filters_label.setProperty("role", "sectionLabel")
+        status_label = QLabel("Status", controls)
+        status_label.setProperty("role", "fieldLabel")
+        bank_label = QLabel("Bank", controls)
+        bank_label.setProperty("role", "fieldLabel")
+
+        controls_layout.addWidget(filters_label)
+        controls_layout.addWidget(status_label)
+        controls_layout.addWidget(self.status_filter)
+        controls_layout.addWidget(bank_label)
+        controls_layout.addWidget(self.bank_filter)
+        controls_layout.addWidget(self.search_edit, 1)
+        controls_layout.addWidget(self.clear_filters_btn)
+        controls_layout.addWidget(self.undo_btn)
+        controls_layout.addWidget(self.redo_btn)
+
+        actions = QFrame(self)
+        actions.setObjectName("actionBar")
+        actions_layout = QHBoxLayout(actions)
+        actions_layout.setContentsMargins(10, 8, 10, 8)
+        actions_layout.setSpacing(8)
+
+        actions_label = QLabel("Actions", actions)
+        actions_label.setProperty("role", "sectionLabel")
+
+        self.view_hint_label = QLabel("", actions)
+        self.view_hint_label.setProperty("role", "metaInfo")
+
+        actions_layout.addWidget(actions_label)
+        actions_layout.addWidget(self.view_hint_label)
+        actions_layout.addStretch(1)
+        actions_layout.addWidget(self.add_btn)
+        actions_layout.addWidget(self.copy_btn)
+        actions_layout.addWidget(self.delete_btn)
 
         self.table = QTableWidget(self)
+        self.table.setObjectName("ledgerTable")
         self.table.setColumnCount(len(BETTING_HEADERS))
         self.table.setHorizontalHeaderLabels(BETTING_HEADERS)
         self.table.verticalHeader().setVisible(False)
+        self.table.verticalHeader().setDefaultSectionSize(44)
+        self.table.verticalHeader().setMinimumSectionSize(32)
         self.table.setAlternatingRowColors(True)
         self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.table.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
@@ -150,9 +233,12 @@ class BettingTab(QWidget):
         self.table.itemSelectionChanged.connect(self._remember_active_selection)
 
         root = QVBoxLayout(self)
-        root.addLayout(top)
-        root.addLayout(actions)
+        root.addWidget(header)
+        root.addWidget(controls)
+        root.addWidget(actions)
         root.addWidget(self.table, 1)
+
+        self._refresh_header_metrics([])
 
         QShortcut(QKeySequence.StandardKey.Undo, self, activated=self.undo_last_change)
         QShortcut(QKeySequence.StandardKey.Redo, self, activated=self.redo_last_change)
@@ -161,6 +247,7 @@ class BettingTab(QWidget):
         self.status_filter.setCurrentIndex(0)
         self.bank_filter.setCurrentIndex(0)
         self.search_edit.clear()
+        self.render_table()
 
     def _push_undo(self) -> None:
         snapshot = self.db.snapshot_betting_records()
@@ -341,6 +428,7 @@ class BettingTab(QWidget):
 
     def render_table(self) -> None:
         records = self._visible_records()
+        self._last_visible_records = records
         self.table.setUpdatesEnabled(False)
         self.table.clearContents()
 
@@ -363,13 +451,15 @@ class BettingTab(QWidget):
         self.table.horizontalHeader().setStretchLastSection(False)
         self.table.setUpdatesEnabled(True)
         self._restore_selection(records)
+        self._refresh_header_metrics(records)
 
     def _render_row(self, row: int, record: dict[str, str]) -> None:
-        status_item = QTableWidgetItem(record.get("status", "NotStarted"))
+        status = record.get("status", "NotStarted")
+        status_item = QTableWidgetItem(status)
         status_item.setFlags(Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable)
         status_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
-        status_item.setBackground(QBrush(QColor(status_color(record.get("status", "NotStarted")))))
-        status_item.setForeground(QBrush(QColor("white")))
+        status_item.setBackground(QBrush(QColor(status_color(status))))
+        status_item.setForeground(QBrush(QColor(status_text_color(status))))
         self.table.setItem(row, 0, status_item)
 
         self.table.setCellWidget(row, 1, self._datetime_widget(record, row, "start_at"))
@@ -399,18 +489,24 @@ class BettingTab(QWidget):
     def _bookie_widget(self, record: dict[str, str], row: int) -> QWidget:
         combo = QComboBox(self.table)
         combo.setEditable(True)
+        combo.setProperty("role", "cellEditor")
         options = self.db.list_betting_bookies()
         combo.addItems(options)
         combo.setCurrentText(record.get("bookie", ""))
+        if combo.lineEdit() is not None:
+            combo.lineEdit().setProperty("role", "cellEditor")
         combo.lineEdit().editingFinished.connect(partial(self._bookie_changed, record["id"], row, combo))
         combo.activated.connect(partial(self._bookie_changed, record["id"], row, combo))
         return combo
 
     def _combo_widget(self, record: dict[str, str], row: int, field: str, values: list[str]) -> QWidget:
         combo = QComboBox(self.table)
+        combo.setProperty("role", "cellEditor")
         combo.addItems(values)
         idx = combo.findText(record.get(field, ""))
         combo.setCurrentIndex(max(0, idx))
+        if combo.lineEdit() is not None:
+            combo.lineEdit().setProperty("role", "cellEditor")
         combo.currentTextChanged.connect(partial(self._combo_changed, record["id"], row, field))
         return combo
 
@@ -426,12 +522,14 @@ class BettingTab(QWidget):
     ) -> QWidget:
         if is_link:
             widget = LinkLineWidget(record.get(field, ""), self.table)
+            widget.edit.setProperty("role", "cellEditor")
             widget.edit.editingFinished.connect(
                 partial(self._line_changed, record["id"], row, field, widget.edit, numeric, True, profit)
             )
             return widget
 
         edit = QLineEdit(self.table)
+        edit.setProperty("role", "cellEditor")
         edit.setText(record.get(field, ""))
         if numeric or profit:
             edit.setAlignment(Qt.AlignmentFlag.AlignRight)
@@ -440,6 +538,7 @@ class BettingTab(QWidget):
 
     def _datetime_widget(self, record: dict[str, str], row: int, field: str) -> QWidget:
         widget = NullableDateTimeWidget(record.get(field, ""), self.table)
+        widget.edit.setProperty("role", "cellEditor")
         widget.textChanged.connect(partial(self._value_changed, record["id"], row, field))
         return widget
 
@@ -450,6 +549,7 @@ class BettingTab(QWidget):
         layout.addStretch(1)
 
         box = QCheckBox(wrap)
+        box.setProperty("role", "cellToggle")
         box.setChecked(record.get(field, "No") == "Yes")
         box.stateChanged.connect(partial(self._check_changed, record["id"], row, field, box))
 
@@ -569,6 +669,50 @@ class BettingTab(QWidget):
         record_id = self.row_to_record_id.get(current_row)
         if record_id:
             self.active_record_id = record_id
+        self._refresh_header_metrics()
+
+    def _set_metric_chip(self, chip: QLabel, label: str, value: int, state: str) -> None:
+        chip.setText(f"{label}: {value}")
+        chip.setProperty("state", state)
+        chip.style().unpolish(chip)
+        chip.style().polish(chip)
+        chip.update()
+
+    def _refresh_header_metrics(self, records: list[dict[str, str]] | None = None) -> None:
+        visible_records = records if records is not None else self._last_visible_records
+        total = len(visible_records)
+
+        action = 0
+        progress = 0
+        done = 0
+        risk = 0
+        neutral = 0
+        for record in visible_records:
+            group = status_feedback_group(record.get("status", "NotStarted"))
+            if group == "action":
+                action += 1
+            elif group == "progress":
+                progress += 1
+            elif group == "success":
+                done += 1
+            elif group == "risk":
+                risk += 1
+            else:
+                neutral += 1
+
+        selected = len(self._selected_record_ids())
+
+        self._set_metric_chip(self.total_chip, "Total", total, "neutral")
+        self._set_metric_chip(self.action_chip, "Need Action", action, "warning" if action else "neutral")
+        self._set_metric_chip(self.progress_chip, "Waiting", progress, "info" if progress else "neutral")
+        self._set_metric_chip(self.done_chip, "Done", done, "success" if done else "neutral")
+        self._set_metric_chip(self.risk_chip, "Error", risk, "error" if risk else "neutral")
+
+        sort_label = self.sort_field.replace("_", " ").title()
+        sort_order = "ASC" if self.sort_ascending else "DESC"
+        self.view_hint_label.setText(
+            f"Sort: {sort_label} {sort_order} · Visible: {total} · Idle: {neutral} · Selected: {selected}"
+        )
 
     def _on_section_resized(self, index: int, _old_size: int, new_size: int) -> None:
         if self._applying_col_widths:

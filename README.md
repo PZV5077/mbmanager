@@ -1,6 +1,6 @@
 # Matched Betting Manager v2.0.1
 
-Modernized PySide6 interface with a refactored local database architecture.
+Modernized PySide6 interface powered by a qt-material based visual system and a refactored local database architecture.
 
 ## Scope
 
@@ -55,6 +55,11 @@ Indexes:
 
 ## UI Notes
 
+- Global visual system uses `qt-material` with a calm deep-blue default (`dark_blue.xml`) and optional light-blue mode.
+- A project-level overlay stylesheet keeps tab, table, danger actions, and metadata text visually consistent.
+- Linux/Wayland popup paths are explicitly refreshed after show to keep date/time colors stable.
+- Phase 4 motion is intentionally minimal: popup fade-in only, no animated workspace chrome.
+- Phase 5 visual validation was kept focused on Linux-first startup and offscreen smoke runs before packaging.
 - Start/Q/B datetime fields use popup picker with 24-hour time and minute precision.
 - Profit supports inline arithmetic expressions (example: -3+5 -> 2 when editing ends).
 - Betting list supports SQL-backed search/filter/sort.

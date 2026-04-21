@@ -24,10 +24,10 @@ class MainWindow(QMainWindow):
             | Qt.WindowType.WindowCloseButtonHint
         )
         self.setWindowTitle("Matched Betting Manager 2.0.1")
-        self.resize(1580, 900)
+        self.resize(1980, 900)
         self.data_dir = get_data_dir()
         self.ui_settings = UiSettingsStore(self.data_dir)
-        self.theme_mode = self.ui_settings.get_theme_mode("light")
+        self.theme_mode = self.ui_settings.get_theme_mode("dark")
         self._build_workspace()
 
     def _build_workspace(self) -> None:
@@ -64,6 +64,7 @@ class MainWindow(QMainWindow):
         self.theme_toggle_btn.clicked.connect(self._toggle_theme)
 
         self.settings_btn = QPushButton("Settings and About", corner_widget)
+        self.settings_btn.setObjectName("settingsButton")
         self.settings_btn.clicked.connect(self._open_settings)
 
         corner_layout.addWidget(self.theme_toggle_btn)
@@ -124,16 +125,16 @@ class MainWindow(QMainWindow):
         self.theme_toggle_btn.setToolTip("Switch to light theme")
 
     def _sync_settings_button(self, index: int) -> None:
-        if index == self.settings_index:
-            self.settings_btn.setStyleSheet("font-weight: 800;")
-            return
-        self.settings_btn.setStyleSheet("")
+        self.settings_btn.setProperty("active", index == self.settings_index)
+        self.settings_btn.style().unpolish(self.settings_btn)
+        self.settings_btn.style().polish(self.settings_btn)
+        self.settings_btn.update()
 
 
 def main() -> int:
     app = QApplication(sys.argv)
     settings_store = UiSettingsStore(get_data_dir())
-    apply_galaxy_theme(app, settings_store.get_theme_mode("light"))
+    apply_galaxy_theme(app, settings_store.get_theme_mode("dark"))
 
     window = MainWindow()
     window.show()

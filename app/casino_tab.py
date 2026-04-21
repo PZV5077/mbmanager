@@ -26,7 +26,17 @@ from PySide6.QtWidgets import (
 
 from .storage import CsvStore
 from .ui_settings import UiSettingsStore
-from .utils import CASINO_STATUS_ORDER, compute_casino_profit, compute_casino_status, new_id, parse_date, parse_decimal, status_color
+from .utils import (
+    CASINO_STATUS_ORDER,
+    compute_casino_profit,
+    compute_casino_status,
+    new_id,
+    parse_date,
+    parse_decimal,
+    status_color,
+    status_feedback_group,
+    status_text_color,
+)
 from .widgets import LinkLineWidget, NullableDateWidget, normalize_web_url
 
 FIELDS = ["id", "status", "bookie", "promo_start_date", "promo_name", "deposit_amount", "final_amount", "bank_status", "profit", "notes"]
@@ -55,6 +65,7 @@ class CasinoTab(QWidget):
         self._delete_snapshot_ids: list[str] = []
         self._startup_focus_pending = True
         self._applying_col_widths = False
+        self._last_visible_records: list[dict[str, str]] = []
         self.col_widths = self.ui_settings.get_column_widths("casino", COL_WIDTHS, len(HEADERS))
 
         self._normalize_records()
@@ -69,61 +80,135 @@ class CasinoTab(QWidget):
         self.settings_timer.setInterval(300)
         self.settings_timer.timeout.connect(self._save_column_widths)
 
+        title = QLabel("Casino Ledger", self)
+        title.setProperty("role", "panelTitle")
+
+        subtitle = QLabel("Manage promo lifecycle from deposit to bank confirmation.", self)
+        subtitle.setProperty("role", "panelSubtitle")
+
+        self.total_chip = QLabel(self)
+        self.action_chip = QLabel(self)
+        self.progress_chip = QLabel(self)
+        self.done_chip = QLabel(self)
+        self.risk_chip = QLabel(self)
+        for chip in (self.total_chip, self.action_chip, self.progress_chip, self.done_chip, self.risk_chip):
+            chip.setProperty("role", "metricChip")
+            chip.setProperty("state", "neutral")
+
+        header = QFrame(self)
+        header.setObjectName("workspaceHeader")
+        header_layout = QHBoxLayout(header)
+        header_layout.setContentsMargins(12, 10, 12, 10)
+        header_layout.setSpacing(8)
+
+        header_left = QVBoxLayout()
+        header_left.setContentsMargins(0, 0, 0, 0)
+        header_left.setSpacing(2)
+        header_left.addWidget(title)
+        header_left.addWidget(subtitle)
+
+        chip_row = QHBoxLayout()
+        chip_row.setContentsMargins(0, 0, 0, 0)
+        chip_row.setSpacing(6)
+        chip_row.addWidget(self.total_chip)
+        chip_row.addWidget(self.action_chip)
+        chip_row.addWidget(self.progress_chip)
+        chip_row.addWidget(self.done_chip)
+        chip_row.addWidget(self.risk_chip)
+
+        header_layout.addLayout(header_left, 1)
+        header_layout.addLayout(chip_row)
+
         self.search_edit = QLineEdit(self)
         self.search_edit.setPlaceholderText("Search Bookie or Promo")
+        self.search_edit.setProperty("role", "toolbarSearch")
         self.search_edit.textChanged.connect(self.render_table)
 
         self.filter_toggle = QToolButton(self)
-        self.filter_toggle.setText("Filter")
+        self.filter_toggle.setText("Advanced Filters")
         self.filter_toggle.setCheckable(True)
+        self.filter_toggle.setProperty("variant", "secondary")
         self.filter_toggle.toggled.connect(self._toggle_filters)
 
         self.clear_filters_btn = QPushButton("Clear Filters", self)
+        self.clear_filters_btn.setProperty("variant", "ghost")
         self.clear_filters_btn.clicked.connect(self.clear_filters)
 
         self.undo_btn = QPushButton("Undo", self)
+        self.undo_btn.setProperty("variant", "ghost")
         self.undo_btn.clicked.connect(self.undo_last_change)
         self.undo_btn.setEnabled(False)
 
         self.redo_btn = QPushButton("Redo", self)
+        self.redo_btn.setProperty("variant", "ghost")
         self.redo_btn.clicked.connect(self.redo_last_change)
         self.redo_btn.setEnabled(False)
 
         self.add_btn = QPushButton("Add Record", self)
+        self.add_btn.setProperty("variant", "primary")
         self.add_btn.clicked.connect(self.add_record)
         self.add_btn.setFocusPolicy(Qt.NoFocus)
 
         self.copy_btn = QPushButton("Copy Selected", self)
+        self.copy_btn.setProperty("variant", "secondary")
         self.copy_btn.clicked.connect(self.copy_selected)
         self.copy_btn.setFocusPolicy(Qt.NoFocus)
         self.copy_btn.pressed.connect(self._capture_copy_selection)
 
         self.delete_btn = QPushButton("Delete Selected", self)
+        self.delete_btn.setProperty("variant", "danger")
         self.delete_btn.setFocusPolicy(Qt.NoFocus)
         self.delete_btn.pressed.connect(self._capture_delete_selection)
         self.delete_btn.clicked.connect(self.delete_selected)
 
-        top = QHBoxLayout()
-        top.addWidget(QLabel("Search"))
-        top.addWidget(self.search_edit, 1)
-        top.addWidget(self.filter_toggle)
-        top.addWidget(self.clear_filters_btn)
-        top.addWidget(self.undo_btn)
-        top.addWidget(self.redo_btn)
+        controls = QFrame(self)
+        controls.setObjectName("controlBar")
+        controls_layout = QHBoxLayout(controls)
+        controls_layout.setContentsMargins(10, 8, 10, 8)
+        controls_layout.setSpacing(8)
 
-        actions = QHBoxLayout()
-        actions.addStretch(1)
-        actions.addWidget(self.add_btn)
-        actions.addWidget(self.copy_btn)
-        actions.addWidget(self.delete_btn)
+        filter_label = QLabel("Filters", controls)
+        filter_label.setProperty("role", "sectionLabel")
+        search_label = QLabel("Search", controls)
+        search_label.setProperty("role", "fieldLabel")
+
+        controls_layout.addWidget(filter_label)
+        controls_layout.addWidget(search_label)
+        controls_layout.addWidget(self.search_edit, 1)
+        controls_layout.addWidget(self.filter_toggle)
+        controls_layout.addWidget(self.clear_filters_btn)
+        controls_layout.addWidget(self.undo_btn)
+        controls_layout.addWidget(self.redo_btn)
+
+        actions = QFrame(self)
+        actions.setObjectName("actionBar")
+        actions_layout = QHBoxLayout(actions)
+        actions_layout.setContentsMargins(10, 8, 10, 8)
+        actions_layout.setSpacing(8)
+
+        actions_label = QLabel("Actions", actions)
+        actions_label.setProperty("role", "sectionLabel")
+
+        self.view_hint_label = QLabel("", actions)
+        self.view_hint_label.setProperty("role", "metaInfo")
+
+        actions_layout.addWidget(actions_label)
+        actions_layout.addWidget(self.view_hint_label)
+        actions_layout.addStretch(1)
+        actions_layout.addWidget(self.add_btn)
+        actions_layout.addWidget(self.copy_btn)
+        actions_layout.addWidget(self.delete_btn)
 
         self.filter_panel = self._build_filter_panel()
         self.filter_panel.setVisible(False)
 
         self.table = QTableWidget(self)
+        self.table.setObjectName("ledgerTable")
         self.table.setColumnCount(len(HEADERS))
         self.table.setHorizontalHeaderLabels(HEADERS)
         self.table.verticalHeader().setVisible(False)
+        self.table.verticalHeader().setDefaultSectionSize(44)
+        self.table.verticalHeader().setMinimumSectionSize(32)
         self.table.setAlternatingRowColors(True)
         self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.table.setSelectionMode(QAbstractItemView.ExtendedSelection)
@@ -132,15 +217,18 @@ class CasinoTab(QWidget):
         self.table.horizontalHeader().setSectionResizeMode(QHeaderView.Interactive)
         self.table.horizontalHeader().sectionClicked.connect(self.sort_by_column)
         self.table.horizontalHeader().sectionResized.connect(self._on_section_resized)
+        self.table.itemSelectionChanged.connect(self._refresh_header_metrics)
 
         lay = QVBoxLayout(self)
-        lay.addLayout(top)
-        lay.addLayout(actions)
+        lay.addWidget(header)
+        lay.addWidget(controls)
+        lay.addWidget(actions)
         lay.addWidget(self.filter_panel)
         lay.addWidget(self.table, 1)
 
         QShortcut(QKeySequence.Undo, self, activated=self.undo_last_change)
         QShortcut(QKeySequence.Redo, self, activated=self.redo_last_change)
+        self._refresh_header_metrics([])
         self.render_table()
 
     def _normalize_records(self) -> None:
@@ -151,28 +239,39 @@ class CasinoTab(QWidget):
 
     def _build_filter_panel(self) -> QWidget:
         panel = QFrame(self)
+        panel.setObjectName("filterPanel")
         panel.setFrameShape(QFrame.StyledPanel)
         grid = QGridLayout(panel)
+        grid.setContentsMargins(10, 8, 10, 8)
+        grid.setHorizontalSpacing(8)
+        grid.setVerticalSpacing(6)
         self.f_status = self._filter_combo(["Any", *STATUS_FILTERS])
         self.f_bank = self._filter_combo(["Any", *BANK])
-        grid.addWidget(QLabel("Status"), 0, 0)
+        status_label = QLabel("Status", panel)
+        status_label.setProperty("role", "fieldLabel")
+        bank_label = QLabel("Bank", panel)
+        bank_label.setProperty("role", "fieldLabel")
+        grid.addWidget(status_label, 0, 0)
         grid.addWidget(self.f_status, 0, 1)
-        grid.addWidget(QLabel("Bank"), 0, 2)
+        grid.addWidget(bank_label, 0, 2)
         grid.addWidget(self.f_bank, 0, 3)
         return panel
 
     def _filter_combo(self, values: list[str]) -> QComboBox:
         combo = QComboBox(self)
+        combo.setProperty("role", "toolbarSelect")
         combo.addItems(values)
         combo.currentTextChanged.connect(self.render_table)
         return combo
 
     def _toggle_filters(self, checked: bool) -> None:
         self.filter_panel.setVisible(checked)
+        self.filter_toggle.setText("Hide Filters" if checked else "Advanced Filters")
 
     def clear_filters(self) -> None:
         self.f_status.setCurrentIndex(0)
         self.f_bank.setCurrentIndex(0)
+        self.render_table()
 
     def _push_undo(self) -> None:
         self.undo_stack.append((deepcopy(self.records), self.active_record_id))
@@ -416,6 +515,7 @@ class CasinoTab(QWidget):
 
     def render_table(self) -> None:
         visible = self._visible_records()
+        self._last_visible_records = visible
         self.visible_record_ids = [r["id"] for r in visible]
         self.table.setUpdatesEnabled(False)
         self.table.clearContents()
@@ -434,6 +534,7 @@ class CasinoTab(QWidget):
         self.table.horizontalHeader().setStretchLastSection(False)
         self.table.setUpdatesEnabled(True)
         self._restore_selection()
+        self._refresh_header_metrics(visible)
 
     def _on_section_resized(self, index: int, _old_size: int, new_size: int) -> None:
         if self._applying_col_widths:
@@ -473,11 +574,12 @@ class CasinoTab(QWidget):
             self.table.scrollToItem(item)
 
     def _render_row(self, row: int, rec: dict[str, str]) -> None:
-        item = QTableWidgetItem(rec["status"])
+        status = rec["status"]
+        item = QTableWidgetItem(status)
         item.setFlags(Qt.ItemIsEnabled | Qt.ItemIsSelectable)
         item.setTextAlignment(Qt.AlignCenter)
-        item.setBackground(QBrush(QColor(status_color(rec["status"]))))
-        item.setForeground(QBrush(QColor("white")))
+        item.setBackground(QBrush(QColor(status_color(status))))
+        item.setForeground(QBrush(QColor(status_text_color(status))))
         self.table.setItem(row, 0, item)
         widgets = [
             self._bookie_widget(rec, row),
@@ -495,6 +597,8 @@ class CasinoTab(QWidget):
     def _readonly_widget(self, value: str) -> QWidget:
         edit = QLineEdit(self.table)
         edit.setReadOnly(True)
+        edit.setProperty("role", "cellEditor")
+        edit.setAlignment(Qt.AlignRight)
         edit.setText(value)
         return edit
 
@@ -523,29 +627,81 @@ class CasinoTab(QWidget):
     def _bookie_widget(self, rec: dict[str, str], row: int) -> QWidget:
         combo = QComboBox(self.table)
         combo.setEditable(True)
+        combo.setProperty("role", "cellEditor")
         combo.addItems(self._bookie_options())
         combo.setCurrentText(rec.get("bookie", ""))
+        if combo.lineEdit() is not None:
+            combo.lineEdit().setProperty("role", "cellEditor")
         combo.lineEdit().editingFinished.connect(partial(self._bookie_changed, rec["id"], combo))
         combo.activated.connect(partial(self._bookie_changed, rec["id"], combo))
         return self._register_widget(combo, rec["id"], row, "bookie")
 
     def _combo_widget(self, rec: dict[str, str], row: int, field: str, values: list[str]) -> QWidget:
         combo = QComboBox(self.table)
+        combo.setProperty("role", "cellEditor")
         combo.addItems(values)
         idx = combo.findText(rec.get(field, ""))
         combo.setCurrentIndex(max(0, idx))
+        if combo.lineEdit() is not None:
+            combo.lineEdit().setProperty("role", "cellEditor")
         combo.currentTextChanged.connect(partial(self._combo_changed, rec["id"], row, field))
         return self._register_widget(combo, rec["id"], row, field)
 
     def _line_widget(self, rec: dict[str, str], row: int, field: str) -> QWidget:
         widget = LinkLineWidget(rec.get(field, ""), self.table)
+        widget.edit.setProperty("role", "cellEditor")
         widget.edit.editingFinished.connect(partial(self._line_changed, rec["id"], row, field, widget.edit))
         return self._register_widget(widget, rec["id"], row, field)
 
     def _date_widget(self, rec: dict[str, str], row: int, field: str) -> QWidget:
         w = NullableDateWidget(rec.get(field, ""), self.table)
+        w.edit.setProperty("role", "cellEditor")
         w.textChanged.connect(partial(self._value_changed, rec["id"], row, field))
         return self._register_widget(w, rec["id"], row, field)
+
+    def _set_metric_chip(self, chip: QLabel, label: str, value: int, state: str) -> None:
+        chip.setText(f"{label}: {value}")
+        chip.setProperty("state", state)
+        chip.style().unpolish(chip)
+        chip.style().polish(chip)
+        chip.update()
+
+    def _refresh_header_metrics(self, records: list[dict[str, str]] | None = None) -> None:
+        visible_records = records if records is not None else self._last_visible_records
+        total = len(visible_records)
+
+        action = 0
+        progress = 0
+        done = 0
+        risk = 0
+        neutral = 0
+        for record in visible_records:
+            group = status_feedback_group(record.get("status", "NotStarted"))
+            if group == "action":
+                action += 1
+            elif group == "progress":
+                progress += 1
+            elif group == "success":
+                done += 1
+            elif group == "risk":
+                risk += 1
+            else:
+                neutral += 1
+
+        selection_model = self.table.selectionModel()
+        selected = len(selection_model.selectedRows()) if selection_model is not None else 0
+
+        self._set_metric_chip(self.total_chip, "Total", total, "neutral")
+        self._set_metric_chip(self.action_chip, "Need Action", action, "warning" if action else "neutral")
+        self._set_metric_chip(self.progress_chip, "Waiting", progress, "info" if progress else "neutral")
+        self._set_metric_chip(self.done_chip, "Done", done, "success" if done else "neutral")
+        self._set_metric_chip(self.risk_chip, "Error", risk, "error" if risk else "neutral")
+
+        sort_label = self.sort_field.replace("_", " ").title()
+        sort_order = "ASC" if self.sort_ascending else "DESC"
+        self.view_hint_label.setText(
+            f"Sort: {sort_label} {sort_order} · Visible: {total} · Idle: {neutral} · Selected: {selected}"
+        )
 
     def eventFilter(self, watched, event):  # noqa: ANN001
         if event.type() in {QEvent.MouseButtonPress, QEvent.FocusIn}:
