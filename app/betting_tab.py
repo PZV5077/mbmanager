@@ -36,6 +36,7 @@ from .constants import (
     BETTING_STATUS_ORDER,
     BETTING_STATUS_VALUES,
 )
+from .ledger_common import selected_record_ids, set_metric_chip, status_group_counts, view_hint_text
 from .storage import AppDatabase
 from .ui_settings import UiSettingsStore
 from .utils import (
@@ -45,7 +46,6 @@ from .utils import (
     new_id,
     parse_decimal,
     status_color,
-    status_feedback_group,
     status_text_color,
 )
 from .widgets import LinkLineWidget, NullableDateTimeWidget, normalize_web_url
@@ -347,22 +347,7 @@ class BettingTab(QWidget):
         self._copy_snapshot_ids = self._selected_record_ids()
 
     def _selected_record_ids(self, preferred: list[str] | None = None) -> list[str]:
-        if preferred:
-            return list(dict.fromkeys(preferred))
-
-        selection = self.table.selectionModel()
-        rows = {index.row() for index in selection.selectedRows()} if selection is not None else set()
-        ids = [
-            rid
-            for row in sorted(rows)
-            if (rid := self.row_to_record_id.get(row)) is not None
-        ]
-        if ids:
-            return ids
-
-        current_row = self.table.currentRow()
-        current_id = self.row_to_record_id.get(current_row)
-        return [current_id] if current_id else []
+        return selected_record_ids(self.table, self.row_to_record_id, preferred)
 
     def _notify_records_changed(self) -> None:
         if callable(self.on_records_changed):
@@ -671,48 +656,19 @@ class BettingTab(QWidget):
             self.active_record_id = record_id
         self._refresh_header_metrics()
 
-    def _set_metric_chip(self, chip: QLabel, label: str, value: int, state: str) -> None:
-        chip.setText(f"{label}: {value}")
-        chip.setProperty("state", state)
-        chip.style().unpolish(chip)
-        chip.style().polish(chip)
-        chip.update()
-
     def _refresh_header_metrics(self, records: list[dict[str, str]] | None = None) -> None:
         visible_records = records if records is not None else self._last_visible_records
         total = len(visible_records)
-
-        action = 0
-        progress = 0
-        done = 0
-        risk = 0
-        neutral = 0
-        for record in visible_records:
-            group = status_feedback_group(record.get("status", "NotStarted"))
-            if group == "action":
-                action += 1
-            elif group == "progress":
-                progress += 1
-            elif group == "success":
-                done += 1
-            elif group == "risk":
-                risk += 1
-            else:
-                neutral += 1
+        counts = status_group_counts(visible_records)
 
         selected = len(self._selected_record_ids())
 
-        self._set_metric_chip(self.total_chip, "Total", total, "neutral")
-        self._set_metric_chip(self.action_chip, "Need Action", action, "warning" if action else "neutral")
-        self._set_metric_chip(self.progress_chip, "Waiting", progress, "info" if progress else "neutral")
-        self._set_metric_chip(self.done_chip, "Done", done, "success" if done else "neutral")
-        self._set_metric_chip(self.risk_chip, "Error", risk, "error" if risk else "neutral")
-
-        sort_label = self.sort_field.replace("_", " ").title()
-        sort_order = "ASC" if self.sort_ascending else "DESC"
-        self.view_hint_label.setText(
-            f"Sort: {sort_label} {sort_order} · Visible: {total} · Idle: {neutral} · Selected: {selected}"
-        )
+        set_metric_chip(self.total_chip, "Total", total, "neutral")
+        set_metric_chip(self.action_chip, "Need Action", counts["action"], "warning" if counts["action"] else "neutral")
+        set_metric_chip(self.progress_chip, "Waiting", counts["progress"], "info" if counts["progress"] else "neutral")
+        set_metric_chip(self.done_chip, "Done", counts["success"], "success" if counts["success"] else "neutral")
+        set_metric_chip(self.risk_chip, "Error", counts["risk"], "error" if counts["risk"] else "neutral")
+        self.view_hint_label.setText(view_hint_text(self.sort_field, self.sort_ascending, total, counts["neutral"], selected))
 
     def _on_section_resized(self, index: int, _old_size: int, new_size: int) -> None:
         if self._applying_col_widths:

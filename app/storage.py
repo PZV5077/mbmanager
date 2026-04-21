@@ -14,7 +14,7 @@ from .constants import (
     BETTING_Q_TYPES,
     BETTING_STATUS_VALUES,
 )
-from .utils import fmt_decimal, parse_decimal
+from .utils import CASINO_STATUS_ORDER, fmt_decimal, parse_date, parse_decimal
 
 BETTING_TEXT_FIELDS = {
     "id",
@@ -83,6 +83,22 @@ CASINO_DB_COLUMNS = [
     "created_at",
     "updated_at",
 ]
+
+CASINO_TEXT_FIELDS = {
+    "id",
+    "status",
+    "bookie",
+    "promo_start_date",
+    "promo_name",
+    "deposit_amount",
+    "final_amount",
+    "bank_status",
+    "profit",
+    "notes",
+}
+
+CASINO_STATUS_VALUES = ["NotStarted", "NeedDeposit", "NeedFinal", "WaitBank", "Done", "Error"]
+CASINO_BANK_STATUS_VALUES = ["Unconfirmed", "Received", "Issue"]
 
 
 def _now_text() -> str:
@@ -374,6 +390,119 @@ class AppDatabase:
             )
         return out
 
+    def fetch_casino_records(
+        self,
+        *,
+        search: str = "",
+        status: str = "Any",
+        bank_status: str = "Any",
+        sort_field: str = "promo_start_date",
+        ascending: bool = True,
+    ) -> list[dict[str, str]]:
+        where: list[str] = ["1=1"]
+        params: list[Any] = []
+
+        if status and status != "Any":
+            where.append("status = ?")
+            params.append(status)
+
+        if bank_status and bank_status != "Any":
+            where.append("bank_status = ?")
+            params.append(bank_status)
+
+        term = _as_text(search)
+        if term:
+            like = f"%{term}%"
+            where.append("(bookie LIKE ? OR promo_name LIKE ?)")
+            params.extend([like, like])
+
+        order_sql = self._casino_order_sql(sort_field, ascending)
+        query = f"SELECT * FROM casino_records WHERE {' AND '.join(where)} {order_sql}"  # noqa: S608
+        rows = self.conn.execute(query, params).fetchall()
+        return [self._row_to_casino_record(row) for row in rows]
+
+    def list_casino_bookies(self) -> list[str]:
+        rows = self.conn.execute(
+            "SELECT DISTINCT bookie FROM casino_records WHERE TRIM(bookie) != '' ORDER BY LOWER(bookie)"
+        ).fetchall()
+        return [str(row[0]) for row in rows]
+
+    def get_casino_record(self, record_id: str) -> dict[str, str] | None:
+        row = self.conn.execute("SELECT * FROM casino_records WHERE id = ?", (record_id,)).fetchone()
+        if row is None:
+            return None
+        return self._row_to_casino_record(row)
+
+    def insert_casino_record(self, record: dict[str, Any]) -> None:
+        payload = self._normalize_casino_payload(record)
+        now = _now_text()
+        payload["created_at"] = _as_text(record.get("created_at")) or now
+        payload["updated_at"] = _as_text(record.get("updated_at")) or now
+
+        cols = ", ".join(CASINO_DB_COLUMNS)
+        holders = ", ".join(["?"] * len(CASINO_DB_COLUMNS))
+        values = [payload[column] for column in CASINO_DB_COLUMNS]
+        with self.conn:
+            self.conn.execute(f"INSERT INTO casino_records ({cols}) VALUES ({holders})", values)  # noqa: S608
+
+    def update_casino_record(self, record_id: str, record: dict[str, Any]) -> None:
+        payload = self._normalize_casino_payload(record)
+        payload["updated_at"] = _now_text()
+
+        assignments = [
+            "status = ?",
+            "bookie = ?",
+            "promo_start_date = ?",
+            "promo_name = ?",
+            "deposit_amount = ?",
+            "final_amount = ?",
+            "bank_status = ?",
+            "profit = ?",
+            "notes = ?",
+            "updated_at = ?",
+        ]
+        values = [
+            payload["status"],
+            payload["bookie"],
+            payload["promo_start_date"],
+            payload["promo_name"],
+            payload["deposit_amount"],
+            payload["final_amount"],
+            payload["bank_status"],
+            payload["profit"],
+            payload["notes"],
+            payload["updated_at"],
+            record_id,
+        ]
+        with self.conn:
+            self.conn.execute(
+                f"UPDATE casino_records SET {', '.join(assignments)} WHERE id = ?",  # noqa: S608
+                values,
+            )
+
+    def delete_casino_records(self, record_ids: list[str]) -> None:
+        if not record_ids:
+            return
+        holders = ", ".join(["?"] * len(record_ids))
+        with self.conn:
+            self.conn.execute(f"DELETE FROM casino_records WHERE id IN ({holders})", record_ids)  # noqa: S608
+
+    def snapshot_casino_records(self) -> list[dict[str, str]]:
+        rows = self.conn.execute("SELECT * FROM casino_records ORDER BY created_at, id").fetchall()
+        return [self._row_to_casino_record(row, include_meta=True) for row in rows]
+
+    def replace_casino_records(self, records: Iterable[dict[str, Any]]) -> None:
+        with self.conn:
+            self.conn.execute("DELETE FROM casino_records")
+            for record in records:
+                payload = self._normalize_casino_payload(record)
+                payload["created_at"] = _as_text(record.get("created_at")) or _now_text()
+                payload["updated_at"] = _as_text(record.get("updated_at")) or _now_text()
+                cols = ", ".join(CASINO_DB_COLUMNS)
+                holders = ", ".join(["?"] * len(CASINO_DB_COLUMNS))
+                values = [payload[column] for column in CASINO_DB_COLUMNS]
+                self.conn.execute(f"INSERT INTO casino_records ({cols}) VALUES ({holders})", values)  # noqa: S608
+
     def save_casino_records(self, records: Iterable[dict[str, str]]) -> None:
         now = _now_text()
         with self.conn:
@@ -397,6 +526,83 @@ class AppDatabase:
                 holders = ", ".join(["?"] * len(CASINO_DB_COLUMNS))
                 values = [payload[column] for column in CASINO_DB_COLUMNS]
                 self.conn.execute(f"INSERT INTO casino_records ({cols}) VALUES ({holders})", values)  # noqa: S608
+
+    def _normalize_casino_payload(self, record: dict[str, Any]) -> dict[str, Any]:
+        payload: dict[str, Any] = {}
+
+        for field in CASINO_TEXT_FIELDS:
+            payload[field] = _as_text(record.get(field))
+
+        if payload["status"] not in CASINO_STATUS_VALUES:
+            payload["status"] = CASINO_STATUS_VALUES[0]
+        if payload["bank_status"] not in CASINO_BANK_STATUS_VALUES:
+            payload["bank_status"] = CASINO_BANK_STATUS_VALUES[0]
+
+        payload["id"] = _as_text(record.get("id"))
+        if not payload["id"]:
+            raise ValueError("Casino record id is required")
+
+        return payload
+
+    def _row_to_casino_record(self, row: sqlite3.Row, include_meta: bool = False) -> dict[str, str]:
+        record = {
+            "id": _as_text(row["id"]),
+            "status": _as_text(row["status"]),
+            "bookie": _as_text(row["bookie"]),
+            "promo_start_date": _as_text(row["promo_start_date"]),
+            "promo_name": _as_text(row["promo_name"]),
+            "deposit_amount": _as_text(row["deposit_amount"]),
+            "final_amount": _as_text(row["final_amount"]),
+            "bank_status": _as_text(row["bank_status"]),
+            "profit": _as_text(row["profit"]),
+            "notes": _as_text(row["notes"]),
+        }
+        if include_meta:
+            record["created_at"] = _as_text(row["created_at"])
+            record["updated_at"] = _as_text(row["updated_at"])
+        return record
+
+    def _casino_order_sql(self, sort_field: str, ascending: bool) -> str:
+        direction = "ASC" if ascending else "DESC"
+        allowed = {
+            "bookie": "bookie",
+            "promo_start_date": "promo_start_date",
+            "promo_name": "promo_name",
+            "deposit_amount": "CAST(deposit_amount AS REAL)",
+            "final_amount": "CAST(final_amount AS REAL)",
+            "bank_status": "bank_status",
+            "profit": "CAST(profit AS REAL)",
+            "notes": "notes",
+        }
+
+        if sort_field == "status":
+            parts = [f"WHEN '{status}' THEN {index}" for status, index in CASINO_STATUS_ORDER.items()]
+            status_case = "CASE status " + " ".join(parts) + " ELSE 999 END"
+            return f"ORDER BY {status_case} {direction}, promo_start_date DESC, created_at DESC"
+
+        if sort_field == "promo_start_date":
+            return (
+                "ORDER BY "
+                "CASE WHEN TRIM(promo_start_date) = '' THEN 1 ELSE 0 END, "
+                f"substr(promo_start_date, 7, 2) {direction}, "
+                f"substr(promo_start_date, 4, 2) {direction}, "
+                f"substr(promo_start_date, 1, 2) {direction}, "
+                "created_at DESC"
+            )
+
+        column = allowed.get(sort_field, "promo_start_date")
+        if sort_field in {"deposit_amount", "final_amount", "profit"}:
+            raw_field = sort_field
+            return (
+                "ORDER BY "
+                f"CASE WHEN TRIM({raw_field}) = '' THEN 1 ELSE 0 END, "
+                f"{column} {direction}, created_at DESC"
+            )
+
+        if column in {"bookie", "promo_name", "bank_status", "notes"}:
+            return f"ORDER BY LOWER({column}) {direction}, created_at DESC"
+
+        return f"ORDER BY {column} {direction}, created_at DESC"
 
     def _normalize_betting_payload(self, record: dict[str, Any]) -> dict[str, Any]:
         payload: dict[str, Any] = {}

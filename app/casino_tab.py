@@ -24,17 +24,15 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from .storage import CsvStore
+from .ledger_common import selected_record_ids, set_metric_chip, status_group_counts, view_hint_text
+from .storage import AppDatabase
 from .ui_settings import UiSettingsStore
 from .utils import (
-    CASINO_STATUS_ORDER,
     compute_casino_profit,
     compute_casino_status,
     new_id,
-    parse_date,
     parse_decimal,
     status_color,
-    status_feedback_group,
     status_text_color,
 )
 from .widgets import LinkLineWidget, NullableDateWidget, normalize_web_url
@@ -50,9 +48,8 @@ NAV_FIELDS = ["bookie", "promo_start_date", "promo_name", "deposit_amount", "fin
 class CasinoTab(QWidget):
     def __init__(self, data_dir: Path, parent: QWidget | None = None) -> None:
         super().__init__(parent)
-        self.store = CsvStore(data_dir / "casino.csv", FIELDS)
+        self.db = AppDatabase(data_dir)
         self.ui_settings = UiSettingsStore(data_dir)
-        self.records = self.store.load()
         self.active_record_id: str | None = None
         self.sort_field = "promo_start_date"
         self.sort_ascending = True
@@ -67,13 +64,6 @@ class CasinoTab(QWidget):
         self._applying_col_widths = False
         self._last_visible_records: list[dict[str, str]] = []
         self.col_widths = self.ui_settings.get_column_widths("casino", COL_WIDTHS, len(HEADERS))
-
-        self._normalize_records()
-
-        self.save_timer = QTimer(self)
-        self.save_timer.setSingleShot(True)
-        self.save_timer.setInterval(700)
-        self.save_timer.timeout.connect(self._save_records)
 
         self.settings_timer = QTimer(self)
         self.settings_timer.setSingleShot(True)
@@ -231,12 +221,6 @@ class CasinoTab(QWidget):
         self._refresh_header_metrics([])
         self.render_table()
 
-    def _normalize_records(self) -> None:
-        for rec in self.records:
-            rec["profit"] = compute_casino_profit(rec)
-            rec["status"] = compute_casino_status(rec)
-        self._save_records()
-
     def _build_filter_panel(self) -> QWidget:
         panel = QFrame(self)
         panel.setObjectName("filterPanel")
@@ -274,7 +258,7 @@ class CasinoTab(QWidget):
         self.render_table()
 
     def _push_undo(self) -> None:
-        self.undo_stack.append((deepcopy(self.records), self.active_record_id))
+        self.undo_stack.append((deepcopy(self.db.snapshot_casino_records()), self.active_record_id))
         self.undo_stack = self.undo_stack[-30:]
         self.redo_stack.clear()
         self._update_history_buttons()
@@ -286,37 +270,25 @@ class CasinoTab(QWidget):
     def undo_last_change(self) -> None:
         if not self.undo_stack:
             return
-        self.redo_stack.append((deepcopy(self.records), self.active_record_id))
+        self.redo_stack.append((deepcopy(self.db.snapshot_casino_records()), self.active_record_id))
         self.redo_stack = self.redo_stack[-30:]
-        self.records, self.active_record_id = self.undo_stack.pop()
+        records, self.active_record_id = self.undo_stack.pop()
+        self.db.replace_casino_records(records)
         self._update_history_buttons()
-        self.schedule_save()
         self.render_table()
 
     def redo_last_change(self) -> None:
         if not self.redo_stack:
             return
-        self.undo_stack.append((deepcopy(self.records), self.active_record_id))
+        self.undo_stack.append((deepcopy(self.db.snapshot_casino_records()), self.active_record_id))
         self.undo_stack = self.undo_stack[-30:]
-        self.records, self.active_record_id = self.redo_stack.pop()
+        records, self.active_record_id = self.redo_stack.pop()
+        self.db.replace_casino_records(records)
         self._update_history_buttons()
-        self.schedule_save()
         self.render_table()
 
-    def schedule_save(self) -> None:
-        self.save_timer.start()
-
-    def _save_records(self) -> None:
-        for rec in self.records:
-            rec["profit"] = compute_casino_profit(rec)
-            rec["status"] = compute_casino_status(rec)
-        try:
-            self.store.save(self.records)
-        except Exception as exc:  # noqa: BLE001
-            QMessageBox.warning(self, "Save failed", f"Auto-save failed:\n{exc}")
-
     def _bookie_options(self) -> list[str]:
-        return sorted({(r.get("bookie", "") or "").strip() for r in self.records if (r.get("bookie", "") or "").strip()})
+        return self.db.list_casino_bookies()
 
     def add_record(self) -> None:
         self._push_undo()
@@ -332,19 +304,8 @@ class CasinoTab(QWidget):
             "profit": "",
             "notes": "",
         }
-
-        current_id = self._current_record_id()
-        if current_id:
-            insert_at = next((i for i, row in enumerate(self.records) if row.get("id") == current_id), None)
-            if insert_at is None:
-                self.records.append(rec)
-            else:
-                self.records.insert(insert_at + 1, rec)
-        else:
-            self.records.append(rec)
-
+        self.db.insert_casino_record(rec)
         self.active_record_id = rec["id"]
-        self.schedule_save()
         self.render_table()
 
     def delete_selected(self) -> None:
@@ -378,10 +339,8 @@ class CasinoTab(QWidget):
             return
 
         self._push_undo()
-        to_delete = set(selected_ids)
-        self.records = [r for r in self.records if r["id"] not in to_delete]
+        self.db.delete_casino_records(selected_ids)
         self.active_record_id = None
-        self.schedule_save()
         self.render_table()
 
     def copy_selected(self) -> None:
@@ -416,7 +375,7 @@ class CasinoTab(QWidget):
             if rid in seen:
                 continue
             seen.add(rid)
-            original = next((r for r in self.records if r["id"] == rid), None)
+            original = self.db.get_casino_record(rid)
             if original is None:
                 continue
             copied = deepcopy(original)
@@ -431,16 +390,11 @@ class CasinoTab(QWidget):
             return
 
         inserted_ids: list[str] = []
-        for source_id, copied in copied_items:
-            insert_at = next((i for i, row in enumerate(self.records) if row.get("id") == source_id), None)
-            if insert_at is None:
-                self.records.append(copied)
-            else:
-                self.records.insert(insert_at + 1, copied)
+        for _source_id, copied in copied_items:
+            self.db.insert_casino_record(copied)
             inserted_ids.append(copied["id"])
 
         self.active_record_id = inserted_ids[-1]
-        self.schedule_save()
         self.render_table()
 
     def _capture_delete_selection(self) -> None:
@@ -472,34 +426,13 @@ class CasinoTab(QWidget):
         return self.row_to_record_id.get(row) or self.active_record_id
 
     def _visible_records(self) -> list[dict[str, str]]:
-        term = self.search_edit.text().strip().lower()
-        out: list[dict[str, str]] = []
-        for rec in self.records:
-            rec["profit"] = compute_casino_profit(rec)
-            rec["status"] = compute_casino_status(rec)
-            if term:
-                hay = f"{rec.get('bookie','')} {rec.get('promo_name','')}".lower()
-                if term not in hay:
-                    continue
-            if self.f_status.currentText() != "Any" and rec["status"] != self.f_status.currentText():
-                continue
-            if self.f_bank.currentText() != "Any" and rec.get("bank_status", "") != self.f_bank.currentText():
-                continue
-            out.append(rec)
-        return sorted(out, key=self._sort_key, reverse=not self.sort_ascending)
-
-    def _sort_key(self, rec: dict[str, str]):
-        field = self.sort_field
-        value = rec.get(field, "")
-        if field in {"deposit_amount", "final_amount", "profit"}:
-            d = parse_decimal(value)
-            return (d is None, d or 0)
-        if field == "promo_start_date":
-            dt = parse_date(value)
-            return (dt is None, dt)
-        if field == "status":
-            return CASINO_STATUS_ORDER.get(value, 999)
-        return (value or "").lower()
+        return self.db.fetch_casino_records(
+            search=self.search_edit.text(),
+            status=self.f_status.currentText(),
+            bank_status=self.f_bank.currentText(),
+            sort_field=self.sort_field,
+            ascending=self.sort_ascending,
+        )
 
     def sort_by_column(self, col: int) -> None:
         mapping = {0: "status", 1: "bookie", 2: "promo_start_date", 3: "promo_name", 4: "deposit_amount", 5: "final_amount", 6: "bank_status", 7: "profit", 8: "notes"}
@@ -554,7 +487,7 @@ class CasinoTab(QWidget):
         if self._startup_focus_pending:
             self._startup_focus_pending = False
             for row, rid in self.row_to_record_id.items():
-                rec = next((r for r in self.records if r["id"] == rid), None)
+                rec = self.db.get_casino_record(rid)
                 if rec and rec.get("status") != "Done":
                     target_row = row
                     break
@@ -659,49 +592,18 @@ class CasinoTab(QWidget):
         w.textChanged.connect(partial(self._value_changed, rec["id"], row, field))
         return self._register_widget(w, rec["id"], row, field)
 
-    def _set_metric_chip(self, chip: QLabel, label: str, value: int, state: str) -> None:
-        chip.setText(f"{label}: {value}")
-        chip.setProperty("state", state)
-        chip.style().unpolish(chip)
-        chip.style().polish(chip)
-        chip.update()
-
     def _refresh_header_metrics(self, records: list[dict[str, str]] | None = None) -> None:
         visible_records = records if records is not None else self._last_visible_records
         total = len(visible_records)
+        counts = status_group_counts(visible_records)
+        selected = len(selected_record_ids(self.table, self.row_to_record_id))
 
-        action = 0
-        progress = 0
-        done = 0
-        risk = 0
-        neutral = 0
-        for record in visible_records:
-            group = status_feedback_group(record.get("status", "NotStarted"))
-            if group == "action":
-                action += 1
-            elif group == "progress":
-                progress += 1
-            elif group == "success":
-                done += 1
-            elif group == "risk":
-                risk += 1
-            else:
-                neutral += 1
-
-        selection_model = self.table.selectionModel()
-        selected = len(selection_model.selectedRows()) if selection_model is not None else 0
-
-        self._set_metric_chip(self.total_chip, "Total", total, "neutral")
-        self._set_metric_chip(self.action_chip, "Need Action", action, "warning" if action else "neutral")
-        self._set_metric_chip(self.progress_chip, "Waiting", progress, "info" if progress else "neutral")
-        self._set_metric_chip(self.done_chip, "Done", done, "success" if done else "neutral")
-        self._set_metric_chip(self.risk_chip, "Error", risk, "error" if risk else "neutral")
-
-        sort_label = self.sort_field.replace("_", " ").title()
-        sort_order = "ASC" if self.sort_ascending else "DESC"
-        self.view_hint_label.setText(
-            f"Sort: {sort_label} {sort_order} · Visible: {total} · Idle: {neutral} · Selected: {selected}"
-        )
+        set_metric_chip(self.total_chip, "Total", total, "neutral")
+        set_metric_chip(self.action_chip, "Need Action", counts["action"], "warning" if counts["action"] else "neutral")
+        set_metric_chip(self.progress_chip, "Waiting", counts["progress"], "info" if counts["progress"] else "neutral")
+        set_metric_chip(self.done_chip, "Done", counts["success"], "success" if counts["success"] else "neutral")
+        set_metric_chip(self.risk_chip, "Error", counts["risk"], "error" if counts["risk"] else "neutral")
+        self.view_hint_label.setText(view_hint_text(self.sort_field, self.sort_ascending, total, counts["neutral"], selected))
 
     def eventFilter(self, watched, event):  # noqa: ANN001
         if event.type() in {QEvent.MouseButtonPress, QEvent.FocusIn}:
@@ -806,7 +708,7 @@ class CasinoTab(QWidget):
         self._set_record_value(record_id, field, value)
 
     def _set_record_value(self, record_id: str, field: str, value: str) -> None:
-        rec = next((r for r in self.records if r["id"] == record_id), None)
+        rec = self.db.get_casino_record(record_id)
         if rec is None or rec.get(field, "") == value:
             return
         if field == "deposit_amount":
@@ -818,12 +720,12 @@ class CasinoTab(QWidget):
                 QMessageBox.warning(self, "Invalid value", "Dep cannot be negative.")
                 self.render_table(); return
         if field == "final_amount" and value and parse_decimal(value) is None:
-            QMessageBox.warning(self, "Invalid value", "Final must be a number.")
-            self.render_table(); return
+                QMessageBox.warning(self, "Invalid value", "Final must be a number.")
+                self.render_table(); return
         self._push_undo()
         rec[field] = value
         rec["profit"] = compute_casino_profit(rec)
         rec["status"] = compute_casino_status(rec)
+        self.db.update_casino_record(record_id, rec)
         self.active_record_id = record_id
-        self.schedule_save()
         self.render_table()

@@ -4,11 +4,7 @@ from typing import Literal
 
 from PySide6.QtGui import QFont
 from PySide6.QtWidgets import QApplication
-
-try:
-    from qt_material import apply_stylesheet as _material_apply_stylesheet
-except ModuleNotFoundError:
-    _material_apply_stylesheet = None
+from qt_material import apply_stylesheet
 
 ThemeMode = Literal["light", "dark"]
 
@@ -31,15 +27,12 @@ def apply_galaxy_theme(app: QApplication, mode: str = "dark") -> ThemeMode:
     active_mode = normalize_theme_mode(mode)
     app.setFont(QFont("Noto Sans", 10))
 
-    if _material_apply_stylesheet is not None:
-        _material_apply_stylesheet(
-            app,
-            theme=_MATERIAL_THEME_BY_MODE[active_mode],
-            invert_secondary=(active_mode == "light"),
-            extra=_theme_extra(),
-        )
-    else:
-        app.setStyleSheet("")
+    apply_stylesheet(
+        app,
+        theme=_MATERIAL_THEME_BY_MODE[active_mode],
+        invert_secondary=(active_mode == "light"),
+        extra=_theme_extra(),
+    )
 
     app.setStyleSheet(app.styleSheet() + "\n" + _overlay_stylesheet(active_mode))
     app.setProperty("theme_mode", active_mode)
