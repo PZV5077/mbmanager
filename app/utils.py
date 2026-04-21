@@ -17,6 +17,11 @@ DATE_FMT = "%d/%m/%y"
 
 def get_data_dir() -> Path:
     """获取平台特定的数据目录。"""
+    project_root = Path(__file__).resolve().parents[1]
+    test_dir = project_root / "test"
+    if (test_dir / "mbmanager.db").exists():
+        return test_dir
+
     system = platform.system()
 
     if system == "Linux":

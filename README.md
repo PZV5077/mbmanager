@@ -1,49 +1,29 @@
 # Matched Betting Manager v2.0.1
 
-Modernized PySide6 interface powered by a qt-material based visual system and a refactored local database architecture.
+PySide6 desktop app for matched betting records, now running on SQLite with a qt-material based theme system.
 
-## Scope
+## Current Product Scope
 
-- Fully refactored Betting workflow with a new schema and minute-level datetime pickers.
-- Casino tab behavior retained.
-- Reload Offer UI is intentionally excluded in v2 (legacy behavior documented in docs/reload_offer_legacy_spec.md).
-- No backward compatibility layer for old CSV/JSON data.
-- Data directory location remains unchanged from previous versions.
+- Betting: fully migrated to the SQLite schema with editable table workflow.
+- Casino: retained and connected to the same SQLite storage layer.
+- Reload Offer: removed from runtime UI; legacy behavior is documented in docs/reload_offer_legacy_spec.md.
 
-## Data Storage
+## Data and Storage
 
-- Database file: mbmanager.db
-- Path root: platform-specific data directory from app/utils.py
+- Database file name: mbmanager.db.
+- Data directory is resolved by app/utils.py::get_data_dir().
+- Priority rule: if project-root test/mbmanager.db exists, the app uses project-root test first.
+- Otherwise fallback is platform specific (Linux Documents path if available, then home fallback; Windows cwd/mbmanager_data).
 
 ### Betting Table (SQLite)
 
-Main table: betting_records
+Main table: betting_records.
 
-Columns:
-- status
-- start_at
-- bookie
-- promo_name
-- deposit_amount
-- q_result_at
-- q_event
-- q_type (NORM, F-SNR, F-SR, 2UP, ACCA, EP, BOOST, BB, OTH)
-- q_amount
-- q_target
-- q_exchange (SMK, BTF, MB, OTH)
-- q_is_placed
-- q_is_completed
-- b_result_at
-- b_event
-- b_type (NORM, F-SNR, F-SR, 2UP, ACCA, EP, BOOST, BB, OTH)
-- b_amount
-- b_target
-- b_exchange (SMK, MB, OTH)
-- b_is_placed
-- b_is_completed
-- profit
-- bank (Uncon, Rec, Issue)
-- notes
+Core columns:
+- status, start_at, bookie, promo_name, deposit_amount
+- q_result_at, q_event, q_type, q_amount, q_target, q_exchange, q_is_placed, q_is_completed
+- b_result_at, b_event, b_type, b_amount, b_target, b_exchange, b_is_placed, b_is_completed
+- profit, bank, notes
 
 Indexes:
 - status + start_at
@@ -53,16 +33,12 @@ Indexes:
 - b_result_at
 - bank
 
-## UI Notes
+## UI and Behavior
 
-- Global visual system uses `qt-material` with a calm deep-blue default (`dark_blue.xml`) and optional light-blue mode.
-- A project-level overlay stylesheet keeps tab, table, danger actions, and metadata text visually consistent.
-- Linux/Wayland popup paths are explicitly refreshed after show to keep date/time colors stable.
-- Phase 4 motion is intentionally minimal: popup fade-in only, no animated workspace chrome.
-- Phase 5 visual validation was kept focused on Linux-first startup and offscreen smoke runs before packaging.
-- Start/Q/B datetime fields use popup picker with 24-hour time and minute precision.
-- Profit supports inline arithmetic expressions (example: -3+5 -> 2 when editing ends).
-- Betting list supports SQL-backed search/filter/sort.
+- Material theme engine: dark by default, light optional.
+- Shared semantic styling for chips, buttons, status feedback, and table editors.
+- Date/time popup supports minute precision (24h) and uses a minimal fade-in animation.
+- Profit field supports arithmetic expressions (example: -3+5 -> 2 after edit).
 
 ## Run
 
