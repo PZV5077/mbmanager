@@ -129,6 +129,8 @@ class _DateTimePopup(QDialog):
         self._refresh_theme()
 
         time_wrap = QFrame(self)
+        time_wrap.setObjectName("timeRow")
+        time_wrap.setFrameShape(QFrame.Shape.NoFrame)
         time_layout = QHBoxLayout(time_wrap)
         time_layout.setContentsMargins(0, 0, 0, 0)
         time_layout.setSpacing(6)
@@ -137,12 +139,15 @@ class _DateTimePopup(QDialog):
         self.hour_spin = QSpinBox(time_wrap)
         self.hour_spin.setRange(0, 23)
         self.hour_spin.setValue(initial_value.time().hour())
+        self.hour_spin.setFixedHeight(30)
 
         minute_label = QLabel("Minute", time_wrap)
         self.minute_spin = QSpinBox(time_wrap)
         self.minute_spin.setRange(0, 59)
         self.minute_spin.setValue(initial_value.time().minute())
+        self.minute_spin.setFixedHeight(30)
 
+        time_layout.addStretch(1)
         time_layout.addWidget(hour_label)
         time_layout.addWidget(self.hour_spin)
         time_layout.addSpacing(8)
@@ -178,7 +183,9 @@ class _DateTimePopup(QDialog):
         root.addWidget(time_wrap)
         root.addLayout(btn_row)
 
-        self.resize(360, 340)
+        # Give the calendar navigation bar enough vertical room so the month label
+        # doesn't get clipped (seen on some themes/font scales).
+        self.resize(360, 368)
         self._prepare_fade_effect()
 
     def showEvent(self, event: QEvent) -> None:
@@ -254,6 +261,12 @@ def _calendar_popup_stylesheet() -> str:
 
             QDialog#dateTimePopup QFrame {
                 background: transparent;
+                border: none;
+            }
+
+            QDialog#dateTimePopup QFrame#timeRow {
+                background: transparent;
+                border: none;
             }
 
             QCalendarWidget {
@@ -264,6 +277,7 @@ def _calendar_popup_stylesheet() -> str:
             QCalendarWidget QWidget#qt_calendar_navigationbar {
                 background: #152841;
                 border-bottom: 1px solid #273A57;
+                min-height: 40px;
             }
 
             QCalendarWidget QToolButton {
@@ -272,6 +286,7 @@ def _calendar_popup_stylesheet() -> str:
                 border: none;
                 padding: 6px;
                 min-width: 28px;
+                min-height: 26px;
                 font-weight: 600;
             }
 
@@ -291,6 +306,15 @@ def _calendar_popup_stylesheet() -> str:
                 background: #111C33;
                 border: 1px solid #314766;
                 selection-background-color: #1E3A8A;
+                height: 30px;
+                min-height: 12px;
+                padding-top: 0px;
+                padding-bottom: 0px;
+            }
+
+            QCalendarWidget QSpinBox::up-button,
+            QCalendarWidget QSpinBox::down-button {
+                height: 14px;
             }
 
             QCalendarWidget QAbstractItemView:enabled {
@@ -339,6 +363,12 @@ def _calendar_popup_stylesheet() -> str:
 
         QDialog#dateTimePopup QFrame {
             background: transparent;
+            border: none;
+        }
+
+        QDialog#dateTimePopup QFrame#timeRow {
+            background: transparent;
+            border: none;
         }
 
         QCalendarWidget {
@@ -349,6 +379,7 @@ def _calendar_popup_stylesheet() -> str:
         QCalendarWidget QWidget#qt_calendar_navigationbar {
             background: #E8F0FF;
             border-bottom: 1px solid #D2E0F4;
+            min-height: 40px;
         }
 
         QCalendarWidget QToolButton {
@@ -357,6 +388,7 @@ def _calendar_popup_stylesheet() -> str:
             border: none;
             padding: 6px;
             min-width: 28px;
+            min-height: 26px;
             font-weight: 600;
         }
 
@@ -376,6 +408,15 @@ def _calendar_popup_stylesheet() -> str:
             background: #FFFFFF;
             border: 1px solid #C8D8EE;
             selection-background-color: #2563EB;
+            height: 30px;
+            min-height: 12px;
+            padding-top: 0px;
+            padding-bottom: 0px;
+        }
+
+        QCalendarWidget QSpinBox::up-button,
+        QCalendarWidget QSpinBox::down-button {
+            height: 14px;
         }
 
         QCalendarWidget QAbstractItemView:enabled {
