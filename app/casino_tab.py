@@ -450,6 +450,8 @@ class CasinoTab(QWidget):
         visible = self._visible_records()
         self._last_visible_records = visible
         self.visible_record_ids = [r["id"] for r in visible]
+        h_scroll = self.table.horizontalScrollBar().value()
+        v_scroll = self.table.verticalScrollBar().value()
         self.table.setUpdatesEnabled(False)
         self.table.clearContents()
         self.row_to_record_id.clear()
@@ -467,7 +469,14 @@ class CasinoTab(QWidget):
         self.table.horizontalHeader().setStretchLastSection(False)
         self.table.setUpdatesEnabled(True)
         self._restore_selection()
+        self._restore_scroll_position(h_scroll, v_scroll)
         self._refresh_header_metrics(visible)
+
+    def _restore_scroll_position(self, horizontal: int, vertical: int) -> None:
+        hbar = self.table.horizontalScrollBar()
+        vbar = self.table.verticalScrollBar()
+        hbar.setValue(max(hbar.minimum(), min(horizontal, hbar.maximum())))
+        vbar.setValue(max(vbar.minimum(), min(vertical, vbar.maximum())))
 
     def _on_section_resized(self, index: int, _old_size: int, new_size: int) -> None:
         if self._applying_col_widths:

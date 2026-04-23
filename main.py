@@ -7,6 +7,7 @@ from PySide6.QtWidgets import QApplication, QHBoxLayout, QMainWindow, QPushButto
 
 from app.betting_tab import BettingTab
 from app.casino_tab import CasinoTab
+from app.reload_offer_panel import ReloadOffersPanel
 from app.settings_about_tab import SettingsAboutTab
 from app.theme import apply_galaxy_theme, theme_toggle_label
 from app.ui_settings import UiSettingsStore
@@ -45,7 +46,7 @@ class MainWindow(QMainWindow):
         tabs = QTabWidget(container)
         self.tabs = tabs
 
-        self.betting_tab = BettingTab(self.data_dir, self)
+        self.betting_tab = BettingTab(self.data_dir, self, on_records_changed=self._on_betting_records_changed)
         tabs.addTab(self.betting_tab, "Betting")
 
         self.casino_tab = CasinoTab(self.data_dir, self)
@@ -53,6 +54,8 @@ class MainWindow(QMainWindow):
 
         self.settings_index = tabs.addTab(SettingsAboutTab(self.data_dir, self), "Settings and About")
         tabs.tabBar().setTabVisible(self.settings_index, False)
+
+        self.reload_offers_panel = ReloadOffersPanel(self.data_dir, self._activate_reload_offer_instance, container)
 
         corner_widget = QWidget(tabs)
         corner_layout = QHBoxLayout(corner_widget)
@@ -75,6 +78,7 @@ class MainWindow(QMainWindow):
         self._sync_settings_button(tabs.currentIndex())
 
         layout.addWidget(tabs, 1)
+        layout.addWidget(self.reload_offers_panel)
         self.setCentralWidget(container)
 
     def _apply_font_scale(self) -> None:
@@ -116,6 +120,8 @@ class MainWindow(QMainWindow):
 
         self._sync_theme_button()
         self._sync_settings_button(self.tabs.currentIndex())
+        if hasattr(self, "reload_offers_panel"):
+            self.reload_offers_panel.refresh_panel()
 
     def _sync_theme_button(self) -> None:
         self.theme_toggle_btn.setText(theme_toggle_label(self.theme_mode))
@@ -129,6 +135,27 @@ class MainWindow(QMainWindow):
         self.settings_btn.style().unpolish(self.settings_btn)
         self.settings_btn.style().polish(self.settings_btn)
         self.settings_btn.update()
+
+    def _activate_reload_offer_instance(self, instance: dict[str, str]) -> str | None:
+        record_id = instance.get("betting_record_id", "")
+        if record_id:
+            record = self.betting_tab.db.get_betting_record(record_id)
+            if record is not None:
+                self.tabs.setCurrentWidget(self.betting_tab)
+                self.betting_tab.active_record_id = record_id
+                self.betting_tab.render_table()
+                return record_id
+
+        record_id = self.reload_offers_panel.db.create_betting_record_from_reload_offer(instance.get("id", ""))
+        self.tabs.setCurrentWidget(self.betting_tab)
+        self.betting_tab.active_record_id = record_id
+        self.betting_tab.render_table()
+        self.reload_offers_panel.refresh_panel()
+        return record_id
+
+    def _on_betting_records_changed(self) -> None:
+        if hasattr(self, "reload_offers_panel"):
+            self.reload_offers_panel.refresh_panel()
 
 
 def main() -> int:
