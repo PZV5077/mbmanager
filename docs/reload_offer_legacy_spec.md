@@ -1,29 +1,454 @@
-# Reload Offer Legacy Feature Snapshot
+# Reload Offer 功能规格说明
 
-Status: On hold for refactor (intentionally excluded from current rewrite)
+状态：待未来独立重构实现，当前版本暂不包含该功能。
 
-## Existing Legacy Capabilities (v1)
+## 1. 文档目的
 
-- Bottom pull-up panel attached under the main tabs.
-- Toggle expand/collapse to show a calendar and a day-based offer table.
-- Offer templates can be created, duplicated, edited, enabled/disabled, and deleted.
-- Template repeat modes: weekly, biweekly, monthly.
-- Template fixed fields support:
-  - bookie, promo_name, deposit_amount
-  - qb1_type, qb1_amount
-  - has_qb2, qb2_type, qb2_amount
-  - bonus_type, bonus_amount
-- Auto schedule generation window:
-  - Keeps history and future horizon instances.
-  - Rebuilds missing instances for active templates.
-  - Prunes outdated future instances when template changes.
-- Daily preview table shows template, status, and key amounts.
-- Clicking an instance can jump/create corresponding betting record.
-- Instance status can sync from betting progress state.
-- Data file: reload_offers.json in the app data directory.
+本文档用于定义 `Reload Offer` 功能的可执行规格，作为后续重新设计与实现的依据。
 
-## Current Rewrite Decision
+目标有三点：
+- 保留旧版功能中真正有价值的能力。
+- 用更清晰、可维护的方式重新定义数据结构与交互逻辑。
+- 在不增加不必要复杂度的前提下，提供更易用、更直观的外观与操作体验。
 
-- Reload Offer UI and behavior are intentionally not included in the new version.
-- This document preserves the functional baseline for a future dedicated refactor.
-- Any future redesign should reuse this list as acceptance criteria before adding new features.
+本文档优先服务以下场景：
+- 用户按日期查看当天有哪些 reload offer 需要处理。
+- 用户从模板自动生成未来计划，减少重复录入。
+- 用户从 reload offer 实例快速跳转或创建对应 betting 记录。
+- 系统基于 betting 进度同步 reload offer 状态，降低手工维护成本。
+
+## 2. 功能定位
+
+`Reload Offer` 是一个围绕“周期性优惠任务”设计的辅助模块。
+
+它不直接替代 `Betting`，而是作为计划与提醒层存在：
+- `Reload Offer Template` 负责定义周期性优惠规则。
+- `Reload Offer Instance` 负责表示某一天实际需要处理的一次优惠任务。
+- `Betting Record` 负责真实下注与结算过程。
+
+三者关系如下：
+- 模板是规则源。
+- 实例是模板在具体日期上的展开结果。
+- Betting 记录是实例可能关联到的实际执行记录。
+
+## 3. 总体设计原则
+
+### 3.1 用户体验原则
+
+- 默认简单：用户打开后应先看到“今天要做什么”，而不是先理解复杂配置。
+- 操作直达：从查看实例到创建 betting 记录，步骤应尽量少。
+- 信息分层：常用信息默认展示，复杂字段收进编辑面板或详情区。
+- 低认知负担：状态命名、按钮文案、颜色语义要统一。
+- 可恢复：删除、批量变更、重新生成计划等动作应尽量提供确认或可撤销机制。
+
+### 3.2 实现原则
+
+- 先满足旧版核心能力，再考虑扩展。
+- 避免把排期逻辑写死在 UI 层。
+- 模板、实例、状态同步、跳转创建逻辑必须解耦。
+- 新设计默认适配 SQLite-first 架构，避免继续使用难维护的 JSON 整体重写模式。
+
+## 4. 界面与交互设计
+
+## 4.1 总体布局
+
+`Reload Offer` 建议保留为主界面下方的可展开面板，但交互要更清晰。
+
+推荐布局：
+1. 顶部工具条
+2. 左侧日期日历
+3. 右侧当天实例列表
+4. 右上角模板编辑弹窗
+
+展开状态下的主要区域：
+- 工具条：提供展开/收起、日期跳转、筛选、模板管理入口、快速新建。
+- 日历区：按日期查看是否有实例、实例数量、异常状态。
+- 当日列表区：显示所选日期下的实例。
+- 详情区：点击某条实例后显示详情与操作按钮。
+
+收起状态下：
+- 仅显示一条紧凑摘要栏。
+- 摘要栏应至少展示：今日实例数、待处理数、异常数。
+- 点击摘要栏或展开按钮可展开完整面板。
+
+## 4.2 默认展示内容
+
+用户首次展开时，默认应看到：
+- 当前日期
+- 今天的 reload offer 实例列表
+- 明确的状态标记
+- 最常用操作按钮
+
+默认不要先打开模板编辑器。
+默认不要先展示过多历史记录。
+
+## 4.3 日历区设计
+
+日历应支持以下表现：
+- 有实例的日期显示点状或数字标记。
+- 待处理实例较多的日期显示强调色。
+- 有异常实例的日期显示风险色。
+- 当前选中日期有明确高亮。
+- 今天日期有单独视觉强调。
+
+日历点击行为：
+- 点击某一天，右侧列表切换到该日实例。
+- 如果该日没有实例，也应展示空态，而不是空白区域。
+
+日历空态提示建议：
+- “当天没有 reload offer”
+- 可附带快捷操作：“新建模板”或“查看未来计划”
+
+## 4.4 当日实例列表设计
+
+列表建议显示以下列：
+- 状态
+- Bookie
+- Promo 名称
+- Deposit
+- QB 信息摘要
+- Bonus 信息摘要
+- 关联 Betting 状态
+- 操作
+
+其中：
+- `QB 信息摘要` 用简洁文本表达，例如 `QB: NORM 10 
+- `Bonus 信息摘要` 用简洁文本表达，例如 `Cash 12` 或 `Free Spins 20`
+- `操作` 至少包含：查看、创建/跳转 betting、标记完成、更多
+
+列表中的主要交互：
+- 单击：选中并在详情区展示详细信息。
+- 双击：优先执行“跳转或创建 betting”。
+- 右键或更多菜单：展示次级操作。
+
+建议支持排序与筛选，但首版保持克制：
+- 状态筛选
+- Bookie 筛选
+- 仅显示待处理
+
+## 4.5 模板管理设计
+
+模板管理入口建议独立于实例列表，避免把“计划配置”和“当天执行”混在一起。
+
+模板区需要支持：
+- 新建模板
+- 复制模板
+- 编辑模板
+- 启用/禁用模板
+- 删除模板
+- 查看该模板未来实例预览
+
+模板列表建议显示：
+- 启用状态
+- 模板名称
+- Bookie
+- 重复方式
+- 下次触发日期
+- 最近更新时间
+
+## 4.6 按钮与文案建议
+
+按钮文案应尽量短、明确、无歧义。
+
+推荐文案：
+- `新建模板`
+- `复制模板`
+- `停用模板`
+- `启用模板`
+- `删除模板`
+- `创建 Betting`
+- `打开 Betting`
+- `重新生成计划`
+- `仅重建未来`
+- `标记已处理`
+- `查看详情`
+
+避免使用模糊文案：
+- “处理一下”
+- “执行”
+- “同步一下”
+
+## 4.7 易用性要求
+
+- 所有高频操作应在 1 到 2 次点击内完成。
+- 删除、批量重建、停用模板等高风险动作需要确认。
+- 列表和日历切换后要保持当前上下文，不要频繁丢焦点。
+- 从实例跳转到 betting 后，返回时应尽量保留原日期和原选中项。
+- 对新用户，空态区域应给出下一步提示。
+
+## 5. 数据模型
+
+以下为建议的数据结构。具体字段名可在实现时调整，但语义应保持一致。
+
+## 5.1 Template 模型
+
+一个模板表示一条周期性优惠规则。
+
+建议字段：
+- `id`: 模板唯一标识
+- `enabled`: 是否启用
+- `bookie`: 平台名称
+- `promo_name`: 优惠名称
+- `deposit_amount`: 存款金额
+- `qb_type`: QB 类型
+- `qb_amount`: QB 金额
+- `bonus_type`: Bonus 类型
+- `bonus_amount`: Bonus 数值
+- `repeat_mode`: 重复模式
+- `start_date`: 模板开始生效日期
+- `end_date`: 模板结束日期，可为空
+- `anchor_date`: 规则锚点日期
+- `notes`: 模板备注
+- `created_at`: 创建时间
+- `updated_at`: 更新时间
+
+说明：
+- `repeat_mode` 首版支持：`weekly`、`monthly`
+- `anchor_date` 用于稳定计算重复规则，避免简单靠“上次生成日期”带来漂移
+
+## 5.2 Instance 模型
+
+一个实例表示模板在某个具体日期生成的一次任务。
+
+建议字段：
+- `id`: 实例唯一标识
+- `template_id`: 所属模板 ID
+- `scheduled_date`: 计划执行日期
+- `bookie`: 生成当时的 bookie 快照
+- `promo_name`: 生成当时的 promo 名称快照
+- `deposit_amount`: 生成当时的 deposit 快照
+- `qb_type`: 快照字段
+- `qb_amount`: 快照字段
+- `bonus_type`: 快照字段
+- `bonus_amount`: 快照字段
+- `instance_status`: 实例状态
+- `betting_record_id`: 关联 betting 记录 ID，可为空
+- `sync_state`: 与 betting 同步状态
+- `manual_override`: 是否人工覆盖状态
+- `notes`: 实例备注
+- `created_at`: 创建时间
+- `updated_at`: 更新时间
+
+说明：
+- 实例必须保存模板关键字段快照，避免模板后续修改影响历史实例解释。
+- 历史实例不应因为模板修改而被整体重写。
+
+## 5.3 推荐状态定义
+
+实例状态建议首版使用以下集合：
+- `Planned`: 已生成，尚未开始
+- `Ready`: 已到执行日期，可处理
+- `Linked`: 已关联 betting 记录
+- `InProgress`: 对应 betting 正在处理中
+- `Done`: 已完成
+- `Skipped`: 人工跳过
+- `Expired`: 已过期未处理
+- `Error`: 数据异常或同步异常
+
+
+## 6. 排期规则
+
+## 6.1 生成窗口
+
+系统不应无限生成实例，而应维护一个可控窗口。
+
+建议默认窗口：
+- 历史保留：向前 60 天
+- 未来预生成：向后 60 天
+
+可在后续版本中改为设置项，但首版建议固定，降低复杂度。
+
+## 6.2 生成原则
+
+当系统执行“计划重建”时，应：
+- 为所有启用模板，在窗口范围内生成缺失实例。
+- 对已存在实例不重复生成。
+- 对已存在且已关联 betting 的实例，不应随意删除或覆盖。
+- 对窗口外且无业务价值的旧实例，可按清理规则删除或归档。
+
+## 6.3 repeat_mode 规则
+
+### weekly
+- 从 `anchor_date` 开始，每 7 天生成一次。
+
+### biweekly
+- 从 `anchor_date` 开始，每 14 天生成一次。
+
+### monthly
+- 从 `anchor_date` 的“日”出发，按每月同一日生成。
+- 若目标月份没有该日期，则取该月最后一天。
+
+示例：
+- 锚点为 1 月 31 日，则 2 月实例落在 2 月最后一天。
+
+## 6.4 start_date 与 end_date
+
+- `start_date` 之前不生成实例。
+- `end_date` 之后不生成实例。
+- `end_date` 为空时，视为长期有效。
+
+## 6.5 模板修改后的处理原则
+
+修改模板后，不应粗暴重建全部实例。
+
+建议规则：
+- 历史实例不改。
+- 已关联 betting 的实例不自动覆盖。
+- 未来且未开始的实例可根据模板新内容更新或重建。
+- 若重建会删除未来实例，应先确认。
+
+推荐提供两种操作：
+- `保存，仅影响后续新生成实例`
+- `保存并重建未来实例`
+
+## 7. 与 Betting 的联动规则
+
+## 7.1 创建或打开 Betting
+
+从实例点击“创建 Betting”时：
+- 若该实例尚未关联 betting 记录，则创建一条新 betting 记录。
+- 若已存在关联 betting 记录，则按钮应变成“打开 Betting”。
+
+创建 betting 时建议自动带入：
+- bookie
+- promo_name
+- deposit_amount
+- QB 信息
+- bonus 信息
+- 与该实例的关联 ID
+
+## 7.2 一对一关系
+
+首版建议强制：
+- 一个 reload offer instance 最多关联一个 betting record。
+- 一个 betting record 最多回链一个 reload offer instance。
+
+这样更清晰，也更容易在 UI 中理解。
+
+## 7.3 状态同步规则
+
+实例状态与 betting 状态的关系建议如下：
+- 未关联 betting：保持 `Planned` 或 `Ready`
+- 已创建 betting：变为 `Linked`
+- betting 进入处理中：实例变为 `InProgress`
+- betting 完成并收款确认：实例变为 `Done`
+- betting 出现异常或缺失关键字段：实例可标记 `Error`
+
+## 7.4 手工覆盖规则
+
+允许用户手动将实例标记为：
+- `Skipped`
+- `Done`
+- `Error`
+
+但若实例已与 betting 强绑定，则应给出提示：
+- 手工修改实例状态不会自动修改 betting 记录状态。
+
+当 `manual_override = true` 时：
+- 后续自动同步不应直接覆盖用户手工状态。
+- 除非用户主动执行“重新按 betting 同步”。
+
+## 8. 数据持久化建议
+
+旧版本使用 `reload_offers.json`。
+
+新版本建议改为 SQLite，原因：
+- 模板与实例天然适合结构化存储。
+- 需要按日期、状态、bookie 查询。
+- 需要增量更新，而不是整文件重写。
+- 更利于和现有 `Betting` / `Casino` 的存储方式保持一致。
+
+建议表结构方向：
+- `reload_offer_templates`
+- `reload_offer_instances`
+
+如需兼容历史数据，可在首次启用时提供一次性导入逻辑。
+
+## 9. 推荐用户流程
+
+## 9.1 新用户首次使用
+
+1. 打开 `Reload Offer` 面板。
+2. 点击 `新建模板`。
+3. 填写基础信息与重复方式。
+4. 保存模板。
+5. 系统自动生成当前窗口内的实例。
+6. 用户在今天或未来日期看到生成结果。
+
+## 9.2 日常使用
+
+1. 打开面板。
+2. 查看今天待处理实例。
+3. 点击某条实例。
+4. 选择 `创建 Betting` 或 `打开 Betting`。
+5. 完成 betting 后，实例状态自动更新。
+
+## 9.3 模板调整
+
+1. 打开模板列表。
+2. 编辑模板。
+3. 选择仅影响未来新实例，或重建未来实例。
+4. 系统更新计划并保留历史记录。
+
+## 10. 验收标准
+
+后续实现至少应满足以下要求。
+
+### 10.1 功能验收
+- 支持模板新建、复制、编辑、启用、停用、删除。
+- 支持 `weekly`、`biweekly`、`monthly` 三种重复模式。
+- 支持生成历史与未来窗口内的实例。
+- 支持按日期查看实例。
+- 支持从实例创建或打开 betting 记录。
+- 支持实例状态与 betting 状态同步。
+- 支持模板修改后仅重建未来实例。
+
+### 10.2 交互验收
+- 默认展开后能直接看到“今天要处理的实例”。
+- 没有实例时有明确空态提示。
+- 主要操作按钮文案清晰。
+- 日历切换与列表切换流畅，不丢失上下文。
+- 危险操作有确认。
+
+### 10.3 数据验收
+- 历史实例不会因模板编辑被错误篡改。
+- 已关联 betting 的实例不会被重建误删。
+- 重复生成逻辑不会产生重复实例。
+- 状态同步在手工覆盖时不会错误反复覆盖。
+
+## 11. 暂不纳入首版的内容
+
+以下内容不建议在首版实现中加入：
+- 自定义复杂重复规则
+- 多 betting 记录关联同一实例
+- 团队协作或多人分配
+- 高级统计报表
+- 拖拽式日历排期
+- 复杂提醒系统
+
+## 12. 后续扩展方向
+
+若首版运行稳定，可考虑后续扩展：
+- 可配置的历史/未来窗口
+- 更丰富的状态统计
+- 模板分组与标签
+- 过期提醒与通知
+- 与更多账务字段联动
+- 批量创建 betting
+
+## 13. 结论
+
+`Reload Offer` 的合理定位不是再做一个复杂子系统，而是做一个围绕“周期性优惠计划”和“快速进入 betting 执行”的轻量辅助模块。
+
+设计重点应放在：
+- 用户当天能快速知道该做什么
+- 模板配置一次后能自动稳定生成计划
+- 实例与 betting 的关系清晰可追踪
+- 界面简洁、按钮明确、交互低负担
+
+后续如进入正式开发，应以本文档为基线拆分为：
+- 存储设计
+- 排期引擎
+- UI 实现
+- 联动同步
+- 测试用例

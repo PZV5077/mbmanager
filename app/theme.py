@@ -154,12 +154,28 @@ def _overlay_stylesheet(mode: ThemeMode) -> str:
         }}
 
         QLineEdit,
-        QComboBox,
         QDateEdit,
         QDateTimeEdit,
         QSpinBox {{
             border-radius: 8px;
             padding: 6px 10px;
+        }}
+
+        QComboBox {{
+            border-radius: 8px;
+            padding: 6px 10px;
+            combobox-popup: 0;
+        }}
+
+        QComboBox QAbstractItemView {{
+            outline: 0;
+            padding-left: 0px;
+            padding-right: 0px;
+        }}
+
+        QComboBox QAbstractItemView::item {{
+            min-height: 22px;
+            padding: 2px 8px;
         }}
 
         QAbstractItemView {{

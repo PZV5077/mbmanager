@@ -5,7 +5,7 @@ from functools import partial
 from pathlib import Path
 
 from PySide6.QtCore import QEvent, QTimer, Qt
-from PySide6.QtGui import QBrush, QColor, QKeySequence, QShortcut
+from PySide6.QtGui import QBrush, QColor, QFont, QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QComboBox,
@@ -152,6 +152,7 @@ class CasinoTab(QWidget):
         self.delete_btn.clicked.connect(self.delete_selected)
 
         controls = QFrame(self)
+        self.controls_bar = controls
         controls.setObjectName("controlBar")
         controls_layout = QHBoxLayout(controls)
         controls_layout.setContentsMargins(10, 8, 10, 8)
@@ -171,6 +172,7 @@ class CasinoTab(QWidget):
         controls_layout.addWidget(self.redo_btn)
 
         actions = QFrame(self)
+        self.actions_bar = actions
         actions.setObjectName("actionBar")
         actions_layout = QHBoxLayout(actions)
         actions_layout.setContentsMargins(10, 8, 10, 8)
@@ -218,8 +220,76 @@ class CasinoTab(QWidget):
 
         QShortcut(QKeySequence.Undo, self, activated=self.undo_last_change)
         QShortcut(QKeySequence.Redo, self, activated=self.redo_last_change)
+        self._apply_compact_top_bars()
         self._refresh_header_metrics([])
         self.render_table()
+
+    def _apply_compact_top_bars(self) -> None:
+        bar_height = 38
+        for bar in (self.controls_bar, self.actions_bar):
+            bar.setMinimumHeight(bar_height)
+            bar.setMaximumHeight(bar_height)
+
+        for layout in (self.controls_bar.layout(), self.actions_bar.layout()):
+            if isinstance(layout, QHBoxLayout):
+                layout.setContentsMargins(8, 3, 8, 3)
+                layout.setSpacing(6)
+
+        field_height = 24
+        button_height = 24
+        compact_font = QFont(self.font())
+        compact_font.setPointSize(11)
+        compact_font.setBold(False)
+        button_font = QFont(self.font())
+        button_font.setPointSize(11)
+        button_font.setBold(True)
+
+        self.search_edit.setFont(compact_font)
+        self.search_edit.setMinimumHeight(field_height)
+        self.search_edit.setMaximumHeight(field_height)
+        self.search_edit.setTextMargins(6, 0, 6, 0)
+        self.search_edit.setStyleSheet("QLineEdit { padding: 0px 6px; }")
+
+        for combo in (self.f_status, self.f_bank):
+            combo.setFont(compact_font)
+            combo.setMinimumHeight(field_height)
+            combo.setMaximumHeight(field_height)
+            combo.setMaxVisibleItems(20)
+            combo.setStyleSheet("QComboBox { padding: 0px 6px; combobox-popup: 0; }")
+            self._normalize_combo_popup(combo)
+
+        for widget in (self.filter_toggle, self.clear_filters_btn):
+            widget.setFont(button_font)
+            widget.setMinimumHeight(button_height)
+            widget.setMaximumHeight(button_height)
+            if isinstance(widget, QToolButton):
+                widget.setStyleSheet("QToolButton { padding: 0px 8px; }")
+            else:
+                widget.setStyleSheet("QPushButton { padding: 0px 8px; }")
+
+        for button in (
+            self.undo_btn,
+            self.redo_btn,
+            self.add_btn,
+            self.copy_btn,
+            self.delete_btn,
+        ):
+            button.setFont(button_font)
+            button.setMinimumHeight(button_height)
+            button.setMaximumHeight(button_height)
+            button.setStyleSheet("QPushButton { padding: 0px 10px; }")
+
+    def _normalize_combo_popup(self, combo: QComboBox) -> None:
+        view = combo.view()
+        if view is None:
+            return
+        view.setStyleSheet("")
+        view_font = QFont(combo.font())
+        view.setFont(view_font)
+        model = combo.model()
+        for row in range(combo.count()):
+            index = model.index(row, 0)
+            model.setData(index, int(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter), Qt.ItemDataRole.TextAlignmentRole)
 
     def _build_filter_panel(self) -> QWidget:
         panel = QFrame(self)
@@ -245,6 +315,7 @@ class CasinoTab(QWidget):
         combo = QComboBox(self)
         combo.setProperty("role", "toolbarSelect")
         combo.addItems(values)
+        self._normalize_combo_popup(combo)
         combo.currentTextChanged.connect(self.render_table)
         return combo
 
@@ -572,6 +643,7 @@ class CasinoTab(QWidget):
         combo.setProperty("role", "cellEditor")
         combo.addItems(self._bookie_options())
         combo.setCurrentText(rec.get("bookie", ""))
+        self._normalize_combo_popup(combo)
         if combo.lineEdit() is not None:
             combo.lineEdit().setProperty("role", "cellEditor")
         combo.lineEdit().editingFinished.connect(partial(self._bookie_changed, rec["id"], combo))
@@ -584,6 +656,7 @@ class CasinoTab(QWidget):
         combo.addItems(values)
         idx = combo.findText(rec.get(field, ""))
         combo.setCurrentIndex(max(0, idx))
+        self._normalize_combo_popup(combo)
         if combo.lineEdit() is not None:
             combo.lineEdit().setProperty("role", "cellEditor")
         combo.currentTextChanged.connect(partial(self._combo_changed, rec["id"], row, field))

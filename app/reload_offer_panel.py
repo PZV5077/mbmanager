@@ -315,7 +315,24 @@ class ReloadOfferTemplateDialog(QDialog):
 
         self.start_at_widget.textChanged.connect(self._form_changed)
         self.repeat_mode_combo.currentTextChanged.connect(self._refresh_repeat_mode)
+        for combo in (
+            self.repeat_mode_combo,
+            self.repeat_weekday_combo,
+            self.bet_type_combo,
+            self.bonus_type_combo,
+        ):
+            self._normalize_combo_popup(combo)
         self._refresh_repeat_mode(self.repeat_mode_combo.currentText())
+
+    def _normalize_combo_popup(self, combo: QComboBox) -> None:
+        view = combo.view()
+        if view is None:
+            return
+        view.setStyleSheet("")
+        model = combo.model()
+        for row in range(combo.count()):
+            index = model.index(row, 0)
+            model.setData(index, int(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter), Qt.ItemDataRole.TextAlignmentRole)
 
     def _populate_list(self) -> None:
         self.template_list.blockSignals(True)
