@@ -15,7 +15,7 @@ from .constants import (
     BETTING_Q_TYPES,
     BETTING_STATUS_VALUES,
 )
-from .utils import CASINO_STATUS_ORDER, fmt_decimal, new_id, parse_date, parse_decimal
+from .utils import CASINO_STATUS_ORDER, compute_casino_status, fmt_decimal, new_id, parse_date, parse_decimal
 
 BETTING_TEXT_FIELDS = {
     "id",
@@ -101,7 +101,7 @@ CASINO_TEXT_FIELDS = {
 CASINO_STATUS_VALUES = ["NotStarted", "NeedDeposit", "NeedFinal", "WaitBank", "Done", "Error"]
 CASINO_BANK_STATUS_VALUES = ["Unconfirmed", "Received", "Issue"]
 
-RELOAD_TEMPLATE_COLUMNS = [
+RELOAD_BETTING_TEMPLATE_COLUMNS = [
     "id",
     "enabled",
     "start_at",
@@ -120,7 +120,7 @@ RELOAD_TEMPLATE_COLUMNS = [
     "updated_at",
 ]
 
-RELOAD_INSTANCE_COLUMNS = [
+RELOAD_BETTING_INSTANCE_COLUMNS = [
     "id",
     "template_id",
     "scheduled_date",
@@ -134,6 +134,35 @@ RELOAD_INSTANCE_COLUMNS = [
     "bonus_type",
     "notes",
     "betting_record_id",
+    "created_at",
+    "updated_at",
+]
+
+RELOAD_CASINO_TEMPLATE_COLUMNS = [
+    "id",
+    "enabled",
+    "start_at",
+    "bookie",
+    "promo_name",
+    "repeat_mode",
+    "repeat_weekday",
+    "repeat_monthday",
+    "deposit_amount",
+    "notes",
+    "created_at",
+    "updated_at",
+]
+
+RELOAD_CASINO_INSTANCE_COLUMNS = [
+    "id",
+    "template_id",
+    "scheduled_date",
+    "start_at",
+    "bookie",
+    "promo_name",
+    "deposit_amount",
+    "notes",
+    "casino_record_id",
     "created_at",
     "updated_at",
 ]
@@ -254,14 +283,20 @@ class AppDatabase:
             CREATE INDEX IF NOT EXISTS idx_casino_bookie ON casino_records(bookie);
             """
         )
-        self._ensure_reload_offer_schema(q_types, b_types, reload_repeat_modes)
+        self._ensure_reload_betting_and_casino_offer_schema(q_types, b_types, reload_repeat_modes)
 
     def close(self) -> None:
         self.conn.close()
 
-    def _ensure_reload_offer_schema(self, q_types: str, b_types: str, reload_repeat_modes: str) -> None:
-        template_columns = {str(row[1]) for row in self.conn.execute("PRAGMA table_info(reload_offer_templates)")}
-        instance_columns = {str(row[1]) for row in self.conn.execute("PRAGMA table_info(reload_offer_instances)")}
+    def _ensure_reload_betting_and_casino_offer_schema(self, q_types: str, b_types: str, reload_repeat_modes: str) -> None:
+        with self.conn:
+            self.conn.execute("DROP TABLE IF EXISTS reload_offer_instances")
+            self.conn.execute("DROP TABLE IF EXISTS reload_offer_templates")
+
+        template_columns = {str(row[1]) for row in self.conn.execute("PRAGMA table_info(reload_betting_offer_templates)")}
+        instance_columns = {str(row[1]) for row in self.conn.execute("PRAGMA table_info(reload_betting_offer_instances)")}
+        casino_template_columns = {str(row[1]) for row in self.conn.execute("PRAGMA table_info(reload_casino_offer_templates)")}
+        casino_instance_columns = {str(row[1]) for row in self.conn.execute("PRAGMA table_info(reload_casino_offer_instances)")}
 
         expected_template_columns = {
             "id",
@@ -298,13 +333,40 @@ class AppDatabase:
             "created_at",
             "updated_at",
         }
+        expected_casino_template_columns = {
+            "id",
+            "enabled",
+            "start_at",
+            "bookie",
+            "promo_name",
+            "repeat_mode",
+            "repeat_weekday",
+            "repeat_monthday",
+            "deposit_amount",
+            "notes",
+            "created_at",
+            "updated_at",
+        }
+        expected_casino_instance_columns = {
+            "id",
+            "template_id",
+            "scheduled_date",
+            "start_at",
+            "bookie",
+            "promo_name",
+            "deposit_amount",
+            "notes",
+            "casino_record_id",
+            "created_at",
+            "updated_at",
+        }
 
         if template_columns != expected_template_columns:
             with self.conn:
-                self.conn.execute("DROP TABLE IF EXISTS reload_offer_templates")
+                self.conn.execute("DROP TABLE IF EXISTS reload_betting_offer_templates")
                 self.conn.execute(
                     f"""
-                    CREATE TABLE reload_offer_templates (
+                    CREATE TABLE reload_betting_offer_templates (
                         id TEXT PRIMARY KEY,
                         enabled INTEGER NOT NULL DEFAULT 1 CHECK (enabled IN (0, 1)),
                         start_at TEXT NOT NULL DEFAULT '',
@@ -325,16 +387,16 @@ class AppDatabase:
                     """
                 )
                 self.conn.execute(
-                    "CREATE INDEX IF NOT EXISTS idx_reload_template_enabled ON reload_offer_templates(enabled, repeat_mode)"
+                    "CREATE INDEX IF NOT EXISTS idx_reload_betting_template_enabled ON reload_betting_offer_templates(enabled, repeat_mode)"
                 )
-                self.conn.execute("CREATE INDEX IF NOT EXISTS idx_reload_template_bookie ON reload_offer_templates(bookie)")
+                self.conn.execute("CREATE INDEX IF NOT EXISTS idx_reload_betting_template_bookie ON reload_betting_offer_templates(bookie)")
 
         if instance_columns != expected_instance_columns:
             with self.conn:
-                self.conn.execute("DROP TABLE IF EXISTS reload_offer_instances")
+                self.conn.execute("DROP TABLE IF EXISTS reload_betting_offer_instances")
                 self.conn.execute(
                     f"""
-                    CREATE TABLE reload_offer_instances (
+                    CREATE TABLE reload_betting_offer_instances (
                         id TEXT PRIMARY KEY,
                         template_id TEXT NOT NULL,
                         scheduled_date TEXT NOT NULL,
@@ -350,15 +412,74 @@ class AppDatabase:
                         betting_record_id TEXT NOT NULL DEFAULT '',
                         created_at TEXT NOT NULL,
                         updated_at TEXT NOT NULL,
-                        FOREIGN KEY(template_id) REFERENCES reload_offer_templates(id) ON DELETE CASCADE
+                        FOREIGN KEY(template_id) REFERENCES reload_betting_offer_templates(id) ON DELETE CASCADE
                     )
                     """
                 )
                 self.conn.execute(
-                    "CREATE UNIQUE INDEX IF NOT EXISTS idx_reload_instance_template_date ON reload_offer_instances(template_id, scheduled_date)"
+                    "CREATE UNIQUE INDEX IF NOT EXISTS idx_reload_betting_instance_template_date ON reload_betting_offer_instances(template_id, scheduled_date)"
                 )
-                self.conn.execute("CREATE INDEX IF NOT EXISTS idx_reload_instance_date ON reload_offer_instances(scheduled_date)")
-                self.conn.execute("CREATE INDEX IF NOT EXISTS idx_reload_instance_betting ON reload_offer_instances(betting_record_id)")
+                self.conn.execute("CREATE INDEX IF NOT EXISTS idx_reload_betting_instance_date ON reload_betting_offer_instances(scheduled_date)")
+                self.conn.execute("CREATE INDEX IF NOT EXISTS idx_reload_betting_instance_betting ON reload_betting_offer_instances(betting_record_id)")
+
+        if casino_template_columns != expected_casino_template_columns:
+            with self.conn:
+                self.conn.execute("DROP TABLE IF EXISTS reload_casino_offer_templates")
+                self.conn.execute(
+                    f"""
+                    CREATE TABLE reload_casino_offer_templates (
+                        id TEXT PRIMARY KEY,
+                        enabled INTEGER NOT NULL DEFAULT 1 CHECK (enabled IN (0, 1)),
+                        start_at TEXT NOT NULL DEFAULT '',
+                        bookie TEXT NOT NULL DEFAULT '',
+                        promo_name TEXT NOT NULL DEFAULT '',
+                        repeat_mode TEXT NOT NULL DEFAULT 'weekly' CHECK (repeat_mode IN ({reload_repeat_modes})),
+                        repeat_weekday INTEGER NOT NULL DEFAULT 0 CHECK (repeat_weekday BETWEEN 0 AND 6),
+                        repeat_monthday INTEGER NOT NULL DEFAULT 1 CHECK (repeat_monthday BETWEEN 1 AND 31),
+                        deposit_amount REAL,
+                        notes TEXT NOT NULL DEFAULT '',
+                        created_at TEXT NOT NULL,
+                        updated_at TEXT NOT NULL
+                    )
+                    """
+                )
+                self.conn.execute(
+                    "CREATE INDEX IF NOT EXISTS idx_reload_casino_template_enabled ON reload_casino_offer_templates(enabled, repeat_mode)"
+                )
+                self.conn.execute(
+                    "CREATE INDEX IF NOT EXISTS idx_reload_casino_template_bookie ON reload_casino_offer_templates(bookie)"
+                )
+
+        if casino_instance_columns != expected_casino_instance_columns:
+            with self.conn:
+                self.conn.execute("DROP TABLE IF EXISTS reload_casino_offer_instances")
+                self.conn.execute(
+                    """
+                    CREATE TABLE reload_casino_offer_instances (
+                        id TEXT PRIMARY KEY,
+                        template_id TEXT NOT NULL,
+                        scheduled_date TEXT NOT NULL,
+                        start_at TEXT NOT NULL DEFAULT '',
+                        bookie TEXT NOT NULL DEFAULT '',
+                        promo_name TEXT NOT NULL DEFAULT '',
+                        deposit_amount REAL,
+                        notes TEXT NOT NULL DEFAULT '',
+                        casino_record_id TEXT NOT NULL DEFAULT '',
+                        created_at TEXT NOT NULL,
+                        updated_at TEXT NOT NULL,
+                        FOREIGN KEY(template_id) REFERENCES reload_casino_offer_templates(id) ON DELETE CASCADE
+                    )
+                    """
+                )
+                self.conn.execute(
+                    "CREATE UNIQUE INDEX IF NOT EXISTS idx_reload_casino_instance_template_date ON reload_casino_offer_instances(template_id, scheduled_date)"
+                )
+                self.conn.execute(
+                    "CREATE INDEX IF NOT EXISTS idx_reload_casino_instance_date ON reload_casino_offer_instances(scheduled_date)"
+                )
+                self.conn.execute(
+                    "CREATE INDEX IF NOT EXISTS idx_reload_casino_instance_casino ON reload_casino_offer_instances(casino_record_id)"
+                )
 
     def fetch_betting_records(
         self,
@@ -670,35 +791,35 @@ class AppDatabase:
                 values = [payload[column] for column in CASINO_DB_COLUMNS]
                 self.conn.execute(f"INSERT INTO casino_records ({cols}) VALUES ({holders})", values)  # noqa: S608
 
-    def fetch_reload_offer_templates(self) -> list[dict[str, str]]:
+    def fetch_reload_betting_offer_templates(self) -> list[dict[str, str]]:
         rows = self.conn.execute(
-            "SELECT * FROM reload_offer_templates ORDER BY LOWER(bookie), LOWER(promo_name), created_at"
+            "SELECT * FROM reload_betting_offer_templates ORDER BY LOWER(bookie), LOWER(promo_name), created_at"
         ).fetchall()
-        return [self._row_to_reload_offer_template(row, include_meta=True) for row in rows]
+        return [self._row_to_reload_betting_offer_template(row, include_meta=True) for row in rows]
 
-    def replace_reload_offer_templates(self, templates: Iterable[dict[str, Any]]) -> None:
-        normalized = [self._normalize_reload_offer_template_payload(template) for template in templates]
+    def replace_reload_betting_offer_templates(self, templates: Iterable[dict[str, Any]]) -> None:
+        normalized = [self._normalize_reload_betting_offer_template_payload(template) for template in templates]
         now = _now_text()
         with self.conn:
-            self.conn.execute("DELETE FROM reload_offer_templates")
+            self.conn.execute("DELETE FROM reload_betting_offer_templates")
             for template in normalized:
                 template["created_at"] = _as_text(template.get("created_at")) or now
                 template["updated_at"] = _as_text(template.get("updated_at")) or now
-                cols = ", ".join(RELOAD_TEMPLATE_COLUMNS)
-                holders = ", ".join(["?"] * len(RELOAD_TEMPLATE_COLUMNS))
-                values = [template[column] for column in RELOAD_TEMPLATE_COLUMNS]
-                self.conn.execute(f"INSERT INTO reload_offer_templates ({cols}) VALUES ({holders})", values)  # noqa: S608
+                cols = ", ".join(RELOAD_BETTING_TEMPLATE_COLUMNS)
+                holders = ", ".join(["?"] * len(RELOAD_BETTING_TEMPLATE_COLUMNS))
+                values = [template[column] for column in RELOAD_BETTING_TEMPLATE_COLUMNS]
+                self.conn.execute(f"INSERT INTO reload_betting_offer_templates ({cols}) VALUES ({holders})", values)  # noqa: S608
 
-    def refresh_reload_offer_instances(self, window_start: str, window_end: str) -> None:
+    def refresh_reload_betting_offer_instances(self, window_start: str, window_end: str) -> None:
         start_date = self._require_iso_date(window_start, "window_start")
         end_date = self._require_iso_date(window_end, "window_end")
         if end_date < start_date:
             raise ValueError("window_end must be on or after window_start")
 
-        templates = self.fetch_reload_offer_templates()
+        templates = self.fetch_reload_betting_offer_templates()
         with self.conn:
             self.conn.execute(
-                "DELETE FROM reload_offer_instances WHERE scheduled_date < ? OR scheduled_date > ?",
+                "DELETE FROM reload_betting_offer_instances WHERE scheduled_date < ? OR scheduled_date > ?",
                 (window_start, window_end),
             )
 
@@ -706,11 +827,11 @@ class AppDatabase:
             if valid_template_ids:
                 holders = ", ".join(["?"] * len(valid_template_ids))
                 self.conn.execute(
-                    f"DELETE FROM reload_offer_instances WHERE template_id NOT IN ({holders})",  # noqa: S608
+                    f"DELETE FROM reload_betting_offer_instances WHERE template_id NOT IN ({holders})",  # noqa: S608
                     list(valid_template_ids),
                 )
             else:
-                self.conn.execute("DELETE FROM reload_offer_instances")
+                self.conn.execute("DELETE FROM reload_betting_offer_instances")
                 return
 
             for template in templates:
@@ -718,26 +839,26 @@ class AppDatabase:
                 scheduled_dates = set(self._generate_template_dates(template, start_date, end_date))
                 if not scheduled_dates:
                     self.conn.execute(
-                        "DELETE FROM reload_offer_instances WHERE template_id = ? AND scheduled_date BETWEEN ? AND ? AND TRIM(betting_record_id) = ''",
+                        "DELETE FROM reload_betting_offer_instances WHERE template_id = ? AND scheduled_date BETWEEN ? AND ? AND TRIM(betting_record_id) = ''",
                         (template_id, window_start, window_end),
                     )
                     continue
 
                 existing_rows = self.conn.execute(
-                    "SELECT id, scheduled_date, betting_record_id FROM reload_offer_instances WHERE template_id = ? AND scheduled_date BETWEEN ? AND ?",
+                    "SELECT id, scheduled_date, betting_record_id FROM reload_betting_offer_instances WHERE template_id = ? AND scheduled_date BETWEEN ? AND ?",
                     (template_id, window_start, window_end),
                 ).fetchall()
                 existing_by_date = {str(row["scheduled_date"]): row for row in existing_rows}
 
                 for scheduled_date in sorted(scheduled_dates):
                     existing = existing_by_date.get(scheduled_date)
-                    payload = self._build_reload_offer_instance_payload(template, scheduled_date)
+                    payload = self._build_reload_betting_offer_instance_payload(template, scheduled_date)
                     if existing is None:
-                        cols = ", ".join(RELOAD_INSTANCE_COLUMNS)
-                        holders = ", ".join(["?"] * len(RELOAD_INSTANCE_COLUMNS))
-                        values = [payload[column] for column in RELOAD_INSTANCE_COLUMNS]
+                        cols = ", ".join(RELOAD_BETTING_INSTANCE_COLUMNS)
+                        holders = ", ".join(["?"] * len(RELOAD_BETTING_INSTANCE_COLUMNS))
+                        values = [payload[column] for column in RELOAD_BETTING_INSTANCE_COLUMNS]
                         self.conn.execute(
-                            f"INSERT INTO reload_offer_instances ({cols}) VALUES ({holders})",  # noqa: S608
+                            f"INSERT INTO reload_betting_offer_instances ({cols}) VALUES ({holders})",  # noqa: S608
                             values,
                         )
                         continue
@@ -771,7 +892,7 @@ class AppDatabase:
                         str(existing["id"]),
                     ]
                     self.conn.execute(
-                        f"UPDATE reload_offer_instances SET {', '.join(assignments)} WHERE id = ?",  # noqa: S608
+                        f"UPDATE reload_betting_offer_instances SET {', '.join(assignments)} WHERE id = ?",  # noqa: S608
                         values,
                     )
 
@@ -783,35 +904,168 @@ class AppDatabase:
                 if removable_dates:
                     holders = ", ".join(["?"] * len(removable_dates))
                     self.conn.execute(
-                        f"DELETE FROM reload_offer_instances WHERE template_id = ? AND scheduled_date IN ({holders}) AND TRIM(betting_record_id) = ''",  # noqa: S608
+                        f"DELETE FROM reload_betting_offer_instances WHERE template_id = ? AND scheduled_date IN ({holders}) AND TRIM(betting_record_id) = ''",  # noqa: S608
                         [template_id, *removable_dates],
                     )
 
-    def fetch_reload_offer_instances_for_date(self, scheduled_date: str) -> list[dict[str, str]]:
+    def fetch_reload_betting_offer_instances_for_date(self, scheduled_date: str) -> list[dict[str, str]]:
         self._require_iso_date(scheduled_date, "scheduled_date")
         rows = self.conn.execute(
-            "SELECT * FROM reload_offer_instances WHERE scheduled_date = ? ORDER BY start_at, LOWER(bookie), LOWER(promo_name)",
+            "SELECT * FROM reload_betting_offer_instances WHERE scheduled_date = ? ORDER BY start_at, LOWER(bookie), LOWER(promo_name)",
             (scheduled_date,),
         ).fetchall()
-        return [self._row_to_reload_offer_instance(row) for row in rows]
+        return [self._row_to_reload_betting_offer_instance(row) for row in rows]
 
-    def set_reload_offer_instance_betting_record(self, instance_id: str, betting_record_id: str) -> None:
+    def set_reload_betting_offer_instance_betting_record(self, instance_id: str, betting_record_id: str) -> None:
         with self.conn:
             self.conn.execute(
-                "UPDATE reload_offer_instances SET betting_record_id = ?, updated_at = ? WHERE id = ?",
+                "UPDATE reload_betting_offer_instances SET betting_record_id = ?, updated_at = ? WHERE id = ?",
                 (_as_text(betting_record_id), _now_text(), _as_text(instance_id)),
             )
 
-    def find_reload_offer_instance_by_betting_record(self, betting_record_id: str) -> dict[str, str] | None:
+    def find_reload_betting_offer_instance_by_betting_record(self, betting_record_id: str) -> dict[str, str] | None:
         row = self.conn.execute(
-            "SELECT * FROM reload_offer_instances WHERE betting_record_id = ? LIMIT 1",
+            "SELECT * FROM reload_betting_offer_instances WHERE betting_record_id = ? LIMIT 1",
             (_as_text(betting_record_id),),
         ).fetchone()
         if row is None:
             return None
-        return self._row_to_reload_offer_instance(row)
+        return self._row_to_reload_betting_offer_instance(row)
 
-    def _normalize_reload_offer_template_payload(self, template: dict[str, Any]) -> dict[str, Any]:
+    def fetch_reload_casino_offer_templates(self) -> list[dict[str, str]]:
+        rows = self.conn.execute(
+            "SELECT * FROM reload_casino_offer_templates ORDER BY LOWER(bookie), LOWER(promo_name), created_at"
+        ).fetchall()
+        return [self._row_to_reload_casino_offer_template(row, include_meta=True) for row in rows]
+
+    def replace_reload_casino_offer_templates(self, templates: Iterable[dict[str, Any]]) -> None:
+        normalized = [self._normalize_reload_casino_offer_template_payload(template) for template in templates]
+        now = _now_text()
+        with self.conn:
+            self.conn.execute("DELETE FROM reload_casino_offer_templates")
+            for template in normalized:
+                template["created_at"] = _as_text(template.get("created_at")) or now
+                template["updated_at"] = _as_text(template.get("updated_at")) or now
+                cols = ", ".join(RELOAD_CASINO_TEMPLATE_COLUMNS)
+                holders = ", ".join(["?"] * len(RELOAD_CASINO_TEMPLATE_COLUMNS))
+                values = [template[column] for column in RELOAD_CASINO_TEMPLATE_COLUMNS]
+                self.conn.execute(f"INSERT INTO reload_casino_offer_templates ({cols}) VALUES ({holders})", values)  # noqa: S608
+
+    def refresh_reload_casino_offer_instances(self, window_start: str, window_end: str) -> None:
+        start_date = self._require_iso_date(window_start, "window_start")
+        end_date = self._require_iso_date(window_end, "window_end")
+        if end_date < start_date:
+            raise ValueError("window_end must be on or after window_start")
+
+        templates = self.fetch_reload_casino_offer_templates()
+        with self.conn:
+            self.conn.execute(
+                "DELETE FROM reload_casino_offer_instances WHERE scheduled_date < ? OR scheduled_date > ?",
+                (window_start, window_end),
+            )
+
+            valid_template_ids = {template["id"] for template in templates}
+            if valid_template_ids:
+                holders = ", ".join(["?"] * len(valid_template_ids))
+                self.conn.execute(
+                    f"DELETE FROM reload_casino_offer_instances WHERE template_id NOT IN ({holders})",  # noqa: S608
+                    list(valid_template_ids),
+                )
+            else:
+                self.conn.execute("DELETE FROM reload_casino_offer_instances")
+                return
+
+            for template in templates:
+                template_id = template["id"]
+                scheduled_dates = set(self._generate_template_dates(template, start_date, end_date))
+                if not scheduled_dates:
+                    self.conn.execute(
+                        "DELETE FROM reload_casino_offer_instances WHERE template_id = ? AND scheduled_date BETWEEN ? AND ? AND TRIM(casino_record_id) = ''",
+                        (template_id, window_start, window_end),
+                    )
+                    continue
+
+                existing_rows = self.conn.execute(
+                    "SELECT id, scheduled_date, casino_record_id FROM reload_casino_offer_instances WHERE template_id = ? AND scheduled_date BETWEEN ? AND ?",
+                    (template_id, window_start, window_end),
+                ).fetchall()
+                existing_by_date = {str(row["scheduled_date"]): row for row in existing_rows}
+
+                for scheduled_date in sorted(scheduled_dates):
+                    existing = existing_by_date.get(scheduled_date)
+                    payload = self._build_reload_casino_offer_instance_payload(template, scheduled_date)
+                    if existing is None:
+                        cols = ", ".join(RELOAD_CASINO_INSTANCE_COLUMNS)
+                        holders = ", ".join(["?"] * len(RELOAD_CASINO_INSTANCE_COLUMNS))
+                        values = [payload[column] for column in RELOAD_CASINO_INSTANCE_COLUMNS]
+                        self.conn.execute(
+                            f"INSERT INTO reload_casino_offer_instances ({cols}) VALUES ({holders})",  # noqa: S608
+                            values,
+                        )
+                        continue
+
+                    if _as_text(existing["casino_record_id"]):
+                        continue
+
+                    assignments = [
+                        "start_at = ?",
+                        "bookie = ?",
+                        "promo_name = ?",
+                        "deposit_amount = ?",
+                        "notes = ?",
+                        "updated_at = ?",
+                    ]
+                    values = [
+                        payload["start_at"],
+                        payload["bookie"],
+                        payload["promo_name"],
+                        payload["deposit_amount"],
+                        payload["notes"],
+                        payload["updated_at"],
+                        str(existing["id"]),
+                    ]
+                    self.conn.execute(
+                        f"UPDATE reload_casino_offer_instances SET {', '.join(assignments)} WHERE id = ?",  # noqa: S608
+                        values,
+                    )
+
+                removable_dates = [
+                    str(row["scheduled_date"])
+                    for row in existing_rows
+                    if str(row["scheduled_date"]) not in scheduled_dates and not _as_text(row["casino_record_id"])
+                ]
+                if removable_dates:
+                    holders = ", ".join(["?"] * len(removable_dates))
+                    self.conn.execute(
+                        f"DELETE FROM reload_casino_offer_instances WHERE template_id = ? AND scheduled_date IN ({holders}) AND TRIM(casino_record_id) = ''",  # noqa: S608
+                        [template_id, *removable_dates],
+                    )
+
+    def fetch_reload_casino_offer_instances_for_date(self, scheduled_date: str) -> list[dict[str, str]]:
+        self._require_iso_date(scheduled_date, "scheduled_date")
+        rows = self.conn.execute(
+            "SELECT * FROM reload_casino_offer_instances WHERE scheduled_date = ? ORDER BY start_at, LOWER(bookie), LOWER(promo_name)",
+            (scheduled_date,),
+        ).fetchall()
+        return [self._row_to_reload_casino_offer_instance(row) for row in rows]
+
+    def set_reload_casino_offer_instance_casino_record(self, instance_id: str, casino_record_id: str) -> None:
+        with self.conn:
+            self.conn.execute(
+                "UPDATE reload_casino_offer_instances SET casino_record_id = ?, updated_at = ? WHERE id = ?",
+                (_as_text(casino_record_id), _now_text(), _as_text(instance_id)),
+            )
+
+    def find_reload_casino_offer_instance_by_casino_record(self, casino_record_id: str) -> dict[str, str] | None:
+        row = self.conn.execute(
+            "SELECT * FROM reload_casino_offer_instances WHERE casino_record_id = ? LIMIT 1",
+            (_as_text(casino_record_id),),
+        ).fetchone()
+        if row is None:
+            return None
+        return self._row_to_reload_casino_offer_instance(row)
+
+    def _normalize_reload_betting_offer_template_payload(self, template: dict[str, Any]) -> dict[str, Any]:
         payload = {
             "id": _as_text(template.get("id")),
             "enabled": _as_bool(template.get("enabled", 1)),
@@ -832,13 +1086,13 @@ class AppDatabase:
         }
 
         if not payload["id"]:
-            raise ValueError("Reload offer template id is required")
+            raise ValueError("Reload betting offer template id is required")
         if not payload["start_at"]:
-            raise ValueError("Reload offer template start_at is required")
+            raise ValueError("Reload betting offer template start_at is required")
         try:
             datetime.strptime(payload["start_at"], "%Y-%m-%d %H:%M")
         except ValueError as exc:
-            raise ValueError("Reload offer template start_at must match yyyy-MM-dd HH:mm") from exc
+            raise ValueError("Reload betting offer template start_at must match yyyy-MM-dd HH:mm") from exc
         if payload["repeat_mode"] not in _RELOAD_REPEAT_MODES:
             payload["repeat_mode"] = "weekly"
         payload["repeat_weekday"] = max(0, min(6, int(payload["repeat_weekday"])))
@@ -849,7 +1103,7 @@ class AppDatabase:
             payload["bonus_type"] = ""
         return payload
 
-    def _row_to_reload_offer_template(self, row: sqlite3.Row, include_meta: bool = False) -> dict[str, str]:
+    def _row_to_reload_betting_offer_template(self, row: sqlite3.Row, include_meta: bool = False) -> dict[str, str]:
         record = {
             "id": _as_text(row["id"]),
             "enabled": "Yes" if int(row["enabled"] or 0) else "No",
@@ -871,7 +1125,7 @@ class AppDatabase:
             record["updated_at"] = _as_text(row["updated_at"])
         return record
 
-    def _row_to_reload_offer_instance(self, row: sqlite3.Row) -> dict[str, str]:
+    def _row_to_reload_betting_offer_instance(self, row: sqlite3.Row) -> dict[str, str]:
         betting_record_id = _as_text(row["betting_record_id"])
         betting_record = self.get_betting_record(betting_record_id) if betting_record_id else None
         if betting_record_id and betting_record is None:
@@ -904,6 +1158,84 @@ class AppDatabase:
             "bonus_type": _as_text(row["bonus_type"]),
             "notes": _as_text(row["notes"]),
             "betting_record_id": betting_record_id,
+            "status": status,
+        }
+
+    def _normalize_reload_casino_offer_template_payload(self, template: dict[str, Any]) -> dict[str, Any]:
+        payload = {
+            "id": _as_text(template.get("id")),
+            "enabled": _as_bool(template.get("enabled", 1)),
+            "start_at": _as_text(template.get("start_at")),
+            "bookie": _as_text(template.get("bookie")),
+            "promo_name": _as_text(template.get("promo_name")),
+            "repeat_mode": _as_text(template.get("repeat_mode")) or "weekly",
+            "repeat_weekday": int(_as_text(template.get("repeat_weekday")) or "0"),
+            "repeat_monthday": int(_as_text(template.get("repeat_monthday")) or "1"),
+            "deposit_amount": _as_float_or_none(template.get("deposit_amount")),
+            "notes": _as_text(template.get("notes")),
+            "created_at": _as_text(template.get("created_at")),
+            "updated_at": _as_text(template.get("updated_at")),
+        }
+
+        if not payload["id"]:
+            raise ValueError("Reload casino offer template id is required")
+        if not payload["start_at"]:
+            raise ValueError("Reload casino offer template start_at is required")
+        try:
+            datetime.strptime(payload["start_at"], "%Y-%m-%d %H:%M")
+        except ValueError as exc:
+            raise ValueError("Reload casino offer template start_at must match yyyy-MM-dd HH:mm") from exc
+        if payload["repeat_mode"] not in _RELOAD_REPEAT_MODES:
+            payload["repeat_mode"] = "weekly"
+        payload["repeat_weekday"] = max(0, min(6, int(payload["repeat_weekday"])))
+        payload["repeat_monthday"] = max(1, min(31, int(payload["repeat_monthday"])))
+        return payload
+
+    def _row_to_reload_casino_offer_template(self, row: sqlite3.Row, include_meta: bool = False) -> dict[str, str]:
+        record = {
+            "id": _as_text(row["id"]),
+            "enabled": "Yes" if int(row["enabled"] or 0) else "No",
+            "start_at": _as_text(row["start_at"]),
+            "bookie": _as_text(row["bookie"]),
+            "promo_name": _as_text(row["promo_name"]),
+            "repeat_mode": _as_text(row["repeat_mode"]),
+            "repeat_weekday": _as_text(row["repeat_weekday"]),
+            "repeat_monthday": _as_text(row["repeat_monthday"]),
+            "deposit_amount": self._decimal_to_text(row["deposit_amount"]),
+            "notes": _as_text(row["notes"]),
+        }
+        if include_meta:
+            record["created_at"] = _as_text(row["created_at"])
+            record["updated_at"] = _as_text(row["updated_at"])
+        return record
+
+    def _row_to_reload_casino_offer_instance(self, row: sqlite3.Row) -> dict[str, str]:
+        casino_record_id = _as_text(row["casino_record_id"])
+        casino_record = self.get_casino_record(casino_record_id) if casino_record_id else None
+        if casino_record_id and casino_record is None:
+            status = "Not started"
+            casino_record_id = ""
+        else:
+            casino_status = casino_record.get("status", "NotStarted") if casino_record is not None else "NotStarted"
+            status = {
+                "NotStarted": "Record created",
+                "NeedDeposit": "Ready for deposit",
+                "NeedFinal": "Ready for final",
+                "WaitBank": "Waiting bank",
+                "Done": "Completed",
+                "Error": "Error",
+            }.get(casino_status, "Record created") if casino_record_id else "Not started"
+
+        return {
+            "id": _as_text(row["id"]),
+            "template_id": _as_text(row["template_id"]),
+            "scheduled_date": _as_text(row["scheduled_date"]),
+            "start_at": _as_text(row["start_at"]),
+            "bookie": _as_text(row["bookie"]),
+            "promo_name": _as_text(row["promo_name"]),
+            "deposit_amount": self._decimal_to_text(row["deposit_amount"]),
+            "notes": _as_text(row["notes"]),
+            "casino_record_id": casino_record_id,
             "status": status,
         }
 
@@ -953,7 +1285,7 @@ class AppDatabase:
                 current_year += 1
         return dates
 
-    def _build_reload_offer_instance_payload(self, template: dict[str, str], scheduled_date: str) -> dict[str, Any]:
+    def _build_reload_betting_offer_instance_payload(self, template: dict[str, str], scheduled_date: str) -> dict[str, Any]:
         start_at = template.get("start_at", "")
         start_time = datetime.strptime(start_at, "%Y-%m-%d %H:%M").strftime("%H:%M")
         combined_start = f"{scheduled_date} {start_time}"
@@ -976,12 +1308,12 @@ class AppDatabase:
             "updated_at": now,
         }
 
-    def create_betting_record_from_reload_offer(self, instance_id: str) -> str:
-        row = self.conn.execute("SELECT * FROM reload_offer_instances WHERE id = ?", (_as_text(instance_id),)).fetchone()
+    def create_betting_record_from_reload_betting_offer(self, instance_id: str) -> str:
+        row = self.conn.execute("SELECT * FROM reload_betting_offer_instances WHERE id = ?", (_as_text(instance_id),)).fetchone()
         if row is None:
-            raise ValueError("Reload offer instance not found")
+            raise ValueError("Reload betting offer instance not found")
 
-        instance = self._row_to_reload_offer_instance(row)
+        instance = self._row_to_reload_betting_offer_instance(row)
         existing_id = instance.get("betting_record_id", "")
         if existing_id and self.get_betting_record(existing_id) is not None:
             return existing_id
@@ -1015,7 +1347,65 @@ class AppDatabase:
             "notes": instance.get("notes", ""),
         }
         self.insert_betting_record(betting_record)
-        self.set_reload_offer_instance_betting_record(instance_id, record_id)
+        self.set_reload_betting_offer_instance_betting_record(instance_id, record_id)
+        return record_id
+
+    def _build_reload_casino_offer_instance_payload(self, template: dict[str, str], scheduled_date: str) -> dict[str, Any]:
+        start_at = template.get("start_at", "")
+        start_time = datetime.strptime(start_at, "%Y-%m-%d %H:%M").strftime("%H:%M")
+        combined_start = f"{scheduled_date} {start_time}"
+        now = _now_text()
+        return {
+            "id": new_id(),
+            "template_id": template.get("id", ""),
+            "scheduled_date": scheduled_date,
+            "start_at": combined_start,
+            "bookie": template.get("bookie", ""),
+            "promo_name": template.get("promo_name", ""),
+            "deposit_amount": _as_float_or_none(template.get("deposit_amount")),
+            "notes": template.get("notes", ""),
+            "casino_record_id": "",
+            "created_at": now,
+            "updated_at": now,
+        }
+
+    def create_casino_record_from_reload_casino_offer(self, instance_id: str) -> str:
+        row = self.conn.execute(
+            "SELECT * FROM reload_casino_offer_instances WHERE id = ?",
+            (_as_text(instance_id),),
+        ).fetchone()
+        if row is None:
+            raise ValueError("Reload casino offer instance not found")
+
+        instance = self._row_to_reload_casino_offer_instance(row)
+        existing_id = instance.get("casino_record_id", "")
+        if existing_id and self.get_casino_record(existing_id) is not None:
+            return existing_id
+
+        promo_start_date = ""
+        scheduled_date = instance.get("scheduled_date", "")
+        if scheduled_date:
+            try:
+                promo_start_date = datetime.strptime(scheduled_date, "%Y-%m-%d").strftime("%d/%m/%y")
+            except ValueError:
+                promo_start_date = ""
+
+        record_id = new_id()
+        casino_record = {
+            "id": record_id,
+            "status": "NotStarted",
+            "bookie": instance.get("bookie", ""),
+            "promo_start_date": promo_start_date,
+            "promo_name": instance.get("promo_name", ""),
+            "deposit_amount": instance.get("deposit_amount", ""),
+            "final_amount": "",
+            "bank_status": "Unconfirmed",
+            "profit": "",
+            "notes": instance.get("notes", ""),
+        }
+        casino_record["status"] = compute_casino_status(casino_record)
+        self.insert_casino_record(casino_record)
+        self.set_reload_casino_offer_instance_casino_record(instance_id, record_id)
         return record_id
 
     def _normalize_casino_payload(self, record: dict[str, Any]) -> dict[str, Any]:

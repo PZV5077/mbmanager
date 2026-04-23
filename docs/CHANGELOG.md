@@ -1,5 +1,16 @@
 # Changelog
 
+## 2.0.2 - 2026-04-24
+
+### Reload Offers
+- Split Reload Offers into Betting and Casino dedicated panels and template dialogs.
+- Added a shared `ReloadOffersPanelBase` to centralize panel header, calendar/table layout, metrics, expand/collapse animation, and row activation flow.
+- Wired panel refresh notifications from Casino record mutations to keep Reload views synchronized.
+
+### Data and Fixtures
+- Migrated reload storage schema into betting/casino specific template and instance tables.
+- Added small-scale fixture generator at `test/generate_small_test_db.py` and generated `test/fixtures/sample_usage/mbmanager.db` for local testing.
+
 ## 2.0.1 - 2026-04-20
 
 ### Architecture

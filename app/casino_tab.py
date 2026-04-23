@@ -3,6 +3,7 @@ from __future__ import annotations
 from copy import deepcopy
 from functools import partial
 from pathlib import Path
+from typing import Callable
 
 from PySide6.QtCore import QEvent, QTimer, Qt
 from PySide6.QtGui import QBrush, QColor, QFont, QKeySequence, QShortcut
@@ -46,10 +47,16 @@ NAV_FIELDS = ["bookie", "promo_start_date", "promo_name", "deposit_amount", "fin
 
 
 class CasinoTab(QWidget):
-    def __init__(self, data_dir: Path, parent: QWidget | None = None) -> None:
+    def __init__(
+        self,
+        data_dir: Path,
+        parent: QWidget | None = None,
+        on_records_changed: Callable[[], None] | None = None,
+    ) -> None:
         super().__init__(parent)
         self.db = AppDatabase(data_dir)
         self.ui_settings = UiSettingsStore(data_dir)
+        self.on_records_changed = on_records_changed
         self.active_record_id: str | None = None
         self.sort_field = "promo_start_date"
         self.sort_ascending = True
@@ -338,6 +345,10 @@ class CasinoTab(QWidget):
         self.undo_btn.setEnabled(bool(self.undo_stack))
         self.redo_btn.setEnabled(bool(self.redo_stack))
 
+    def _notify_records_changed(self) -> None:
+        if callable(self.on_records_changed):
+            self.on_records_changed()
+
     def undo_last_change(self) -> None:
         if not self.undo_stack:
             return
@@ -347,6 +358,7 @@ class CasinoTab(QWidget):
         self.db.replace_casino_records(records)
         self._update_history_buttons()
         self.render_table()
+        self._notify_records_changed()
 
     def redo_last_change(self) -> None:
         if not self.redo_stack:
@@ -357,6 +369,7 @@ class CasinoTab(QWidget):
         self.db.replace_casino_records(records)
         self._update_history_buttons()
         self.render_table()
+        self._notify_records_changed()
 
     def _bookie_options(self) -> list[str]:
         return self.db.list_casino_bookies()
@@ -378,6 +391,7 @@ class CasinoTab(QWidget):
         self.db.insert_casino_record(rec)
         self.active_record_id = rec["id"]
         self.render_table()
+        self._notify_records_changed()
 
     def delete_selected(self) -> None:
         selected_ids = list(self._delete_snapshot_ids)
@@ -413,6 +427,7 @@ class CasinoTab(QWidget):
         self.db.delete_casino_records(selected_ids)
         self.active_record_id = None
         self.render_table()
+        self._notify_records_changed()
 
     def copy_selected(self) -> None:
         selected_ids = list(self._copy_snapshot_ids)
@@ -467,6 +482,7 @@ class CasinoTab(QWidget):
 
         self.active_record_id = inserted_ids[-1]
         self.render_table()
+        self._notify_records_changed()
 
     def _capture_delete_selection(self) -> None:
         selected_rows = set()
@@ -811,3 +827,4 @@ class CasinoTab(QWidget):
         self.db.update_casino_record(record_id, rec)
         self.active_record_id = record_id
         self.render_table()
+        self._notify_records_changed()

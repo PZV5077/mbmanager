@@ -2,11 +2,9 @@ from __future__ import annotations
 
 from datetime import date, datetime, timedelta
 from pathlib import Path
-from typing import Callable
 
-from PySide6.QtCore import QEasingCurve, QDate, QPropertyAnimation, Qt
+from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
-    QAbstractItemView,
     QCheckBox,
     QComboBox,
     QDialog,
@@ -19,17 +17,14 @@ from PySide6.QtWidgets import (
     QListWidgetItem,
     QMessageBox,
     QPushButton,
-    QCalendarWidget,
     QSpinBox,
     QSplitter,
-    QTableWidget,
-    QTableWidgetItem,
     QVBoxLayout,
     QWidget,
 )
 
 from .constants import BETTING_B_TYPES, BETTING_Q_TYPES
-from .ledger_common import set_metric_chip
+from .reload_offer_panel_base import ReloadOffersPanelBase
 from .storage import AppDatabase
 from .utils import fmt_decimal, new_id, parse_decimal
 from .widgets import NullableDateTimeWidget
@@ -135,13 +130,13 @@ def _calendar_date_format(selected: QDate) -> str:
     return f"Date: {selected.toString('yyyy-MM-dd')} · {_WEEKDAY_LABELS[selected.dayOfWeek() - 1]}"
 
 
-class ReloadOfferTemplateDialog(QDialog):
+class ReloadBettingOfferTemplateDialog(QDialog):
     def __init__(self, data_dir: Path, parent: QWidget | None = None) -> None:
         super().__init__(parent)
-        self.setWindowTitle("Reload Offer Templates")
+        self.setWindowTitle("Reload Betting Offer Templates")
         self.resize(980, 620)
         self.db = AppDatabase(data_dir)
-        self.templates = self.db.fetch_reload_offer_templates()
+        self.templates = self.db.fetch_reload_betting_offer_templates()
         self._loading_form = False
 
         if not self.templates:
@@ -156,7 +151,7 @@ class ReloadOfferTemplateDialog(QDialog):
         root.setContentsMargins(12, 12, 12, 12)
         root.setSpacing(10)
 
-        title = QLabel("Reload Offer Templates", self)
+        title = QLabel("Reload Betting Offer Templates", self)
         title.setProperty("role", "panelTitle")
         subtitle = QLabel("", self)
         subtitle.setProperty("role", "panelSubtitle")
@@ -498,310 +493,59 @@ class ReloadOfferTemplateDialog(QDialog):
 
         horizon_start = _iso_date(_today() - timedelta(days=180))
         horizon_end = _iso_date(_today() + timedelta(days=365))
-        self.db.replace_reload_offer_templates(normalized)
-        self.db.refresh_reload_offer_instances(horizon_start, horizon_end)
+        self.db.replace_reload_betting_offer_templates(normalized)
+        self.db.refresh_reload_betting_offer_instances(horizon_start, horizon_end)
         super().accept()
 
 
-class ReloadOffersPanel(QWidget):
-    def __init__(
-        self,
-        data_dir: Path,
-        activate_instance: Callable[[dict[str, str]], str | None],
-        parent: QWidget | None = None,
-    ) -> None:
-        super().__init__(parent)
-        self.db = AppDatabase(data_dir)
-        self.activate_instance = activate_instance
-        self._expanded = True
-        self._render_guard = False
-        self._content_height_hint = 360
-        self._records: list[dict[str, str]] = []
+class ReloadBettingOffersPanel(ReloadOffersPanelBase):
+    def _panel_title(self) -> str:
+        return "Reload Betting Offers"
 
-        self._build_ui()
-        self.refresh_panel()
+    def _table_headers(self) -> list[str]:
+        return ["Status", "Bookie", "Promo", "Deposit", "Bet", "Bet type", "Bonus", "Bonus type", "Notes"]
 
-    def _build_ui(self) -> None:
-        root = QVBoxLayout(self)
-        root.setContentsMargins(0, 0, 0, 0)
-        root.setSpacing(8)
-        self._root_layout = root
+    def _table_column_widths(self) -> tuple[int, ...]:
+        return (120, 140, 180, 96, 96, 96, 96, 96)
 
-        header = QFrame(self)
-        self._header = header
-        header.setObjectName("workspaceHeader")
-        header_layout = QHBoxLayout(header)
-        self._header_layout = header_layout
-        header_layout.setContentsMargins(12, 10, 12, 10)
-        header_layout.setSpacing(8)
+    def _amount_columns(self) -> set[int]:
+        return {3, 4, 6}
 
-        header_left = QVBoxLayout()
-        self._header_left_layout = header_left
-        header_left.setContentsMargins(0, 0, 0, 0)
-        header_left.setSpacing(2)
+    def _empty_state_text(self) -> str:
+        return "No reload betting offers for this date."
 
-        title = QLabel("Reload Offers", header)
-        title.setProperty("role", "panelTitle")
-        subtitle = QLabel("", header)
-        subtitle.setProperty("role", "panelSubtitle")
-        subtitle.setVisible(False)
-        self.selected_date_label = QLabel("", header)
-        self.selected_date_label.setProperty("role", "metaInfo")
+    def _record_values(self, record: dict[str, str]) -> list[str]:
+        return [
+            record.get("status", "Not started"),
+            record.get("bookie", ""),
+            record.get("promo_name", ""),
+            record.get("deposit_amount", ""),
+            record.get("bet_amount", ""),
+            record.get("bet_type", ""),
+            record.get("bonus_amount", ""),
+            record.get("bonus_type", ""),
+            record.get("notes", ""),
+        ]
 
-        header_left.addWidget(title)
-        header_left.addWidget(subtitle)
-        header_left.addWidget(self.selected_date_label)
+    def _create_template_dialog(self, parent: QWidget) -> QDialog:
+        return ReloadBettingOfferTemplateDialog(self.db.path.parent, parent)
 
-        chip_row = QHBoxLayout()
-        self._chip_row_layout = chip_row
-        chip_row.setContentsMargins(0, 0, 0, 0)
-        chip_row.setSpacing(6)
+    def _refresh_instances_window(self, window_start: str, window_end: str) -> None:
+        self.db.refresh_reload_betting_offer_instances(window_start, window_end)
 
-        self.today_chip = QLabel(header)
-        self.pending_chip = QLabel(header)
-        self.done_chip = QLabel(header)
-        self.error_chip = QLabel(header)
-        for chip in (self.today_chip, self.pending_chip, self.done_chip, self.error_chip):
-            chip.setProperty("role", "metricChip")
-            chip.setProperty("state", "neutral")
-            chip_row.addWidget(chip)
+    def _fetch_instances_for_date(self, date_iso: str) -> list[dict[str, str]]:
+        return self.db.fetch_reload_betting_offer_instances_for_date(date_iso)
 
-        self.template_btn = QPushButton("Templates", header)
-        self.template_btn.setProperty("variant", "secondary")
-        self.template_btn.setStyleSheet("padding: 1px 10px;")
-        self.template_btn.clicked.connect(self._open_template_dialog)
+    def _link_instance_record(self, instance_id: str, record_id: str) -> None:
+        self.db.set_reload_betting_offer_instance_betting_record(instance_id, record_id)
 
-        self.toggle_btn = QPushButton("Collapse", header)
-        self.toggle_btn.setProperty("variant", "ghost")
-        self.toggle_btn.setStyleSheet("padding: 1px 10px;")
-        self.toggle_btn.clicked.connect(self._toggle_expanded)
-        self._apply_header_button_widths()
+    def _is_done_status(self, status: str) -> bool:
+        return status == _status_label("Done")
 
-        header_layout.addLayout(header_left, 1)
-        header_layout.addLayout(chip_row)
-        header_layout.addWidget(self.template_btn)
-        header_layout.addWidget(self.toggle_btn)
-        root.addWidget(header)
+    def _is_error_status(self, status: str) -> bool:
+        return status == _status_label("Error")
 
-        self.content = QFrame(self)
-        self.content.setObjectName("filterPanel")
-        content_layout = QHBoxLayout(self.content)
-        content_layout.setContentsMargins(10, 10, 10, 10)
-        content_layout.setSpacing(10)
-
-        calendar_panel = QFrame(self.content)
-        calendar_panel.setObjectName("actionBar")
-        calendar_layout = QVBoxLayout(calendar_panel)
-        calendar_layout.setContentsMargins(10, 10, 10, 10)
-        calendar_layout.setSpacing(8)
-
-        calendar_title = QLabel("Date", calendar_panel)
-        calendar_title.setProperty("role", "sectionLabel")
-
-        self.calendar = QCalendarWidget(calendar_panel)
-        self.calendar.setGridVisible(False)
-        self.calendar.setVerticalHeaderFormat(QCalendarWidget.VerticalHeaderFormat.NoVerticalHeader)
-        self.calendar.setSelectedDate(QDate.currentDate())
-        self.calendar.selectionChanged.connect(self._on_calendar_changed)
-
-        calendar_layout.addWidget(calendar_title)
-        calendar_layout.addWidget(self.calendar, 1)
-
-        table_panel = QFrame(self.content)
-        table_panel.setObjectName("actionBar")
-        table_layout = QVBoxLayout(table_panel)
-        table_layout.setContentsMargins(10, 10, 10, 10)
-        table_layout.setSpacing(8)
-
-        table_title = QLabel("Task table", table_panel)
-        table_title.setProperty("role", "sectionLabel")
-        self.empty_label = QLabel("", table_panel)
-        self.empty_label.setProperty("role", "metaInfo")
-
-        self.table = QTableWidget(table_panel)
-        self.table.setObjectName("ledgerTable")
-        self.table.setColumnCount(9)
-        self.table.setHorizontalHeaderLabels(
-            ["Status", "Bookie", "Promo", "Deposit", "Bet", "Bet type", "Bonus", "Bonus type", "Notes"]
-        )
-        self.table.verticalHeader().setVisible(False)
-        self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
-        self.table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
-        self.table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
-        self.table.setAlternatingRowColors(True)
-        self.table.cellClicked.connect(self._activate_selected_row)
-
-        header_view = self.table.horizontalHeader()
-        header_view.setStretchLastSection(True)
-        for column, width in enumerate((120, 140, 180, 96, 96, 96, 96, 96)):
-            header_view.resizeSection(column, width)
-
-        table_layout.addWidget(table_title)
-        table_layout.addWidget(self.empty_label)
-        table_layout.addWidget(self.table, 1)
-
-        content_layout.addWidget(calendar_panel, 0)
-        content_layout.addWidget(table_panel, 1)
-        root.addWidget(self.content)
-
-        self.content_animation = QPropertyAnimation(self.content, b"maximumHeight", self)
-        self.content_animation.setDuration(180)
-        self.content_animation.setEasingCurve(QEasingCurve.Type.OutCubic)
-        base_header_height = max(72, self._header.sizeHint().height())
-        self._header_fixed_height = max(40, int(base_header_height * 0.5))
-        self._header.setMinimumHeight(self._header_fixed_height)
-        self._header.setMaximumHeight(self._header_fixed_height)
-        self._apply_header_density(compact=False)
-
-    def _apply_header_button_widths(self) -> None:
-        template_metrics = self.template_btn.fontMetrics()
-        toggle_metrics = self.toggle_btn.fontMetrics()
-        template_width = template_metrics.horizontalAdvance("Templates") + 28
-        toggle_width = max(
-            toggle_metrics.horizontalAdvance("Collapse"),
-            toggle_metrics.horizontalAdvance("Expand"),
-        ) + 28
-        self.template_btn.setFixedWidth(max(86, template_width))
-        self.toggle_btn.setFixedWidth(max(84, toggle_width))
-
-    def refresh_panel(self) -> None:
-        self._ensure_date_loaded(self.calendar.selectedDate())
-        self._refresh_selected_date_label()
-        self._render_table()
-        self._refresh_summary()
-
-    def _refresh_selected_date_label(self) -> None:
-        selected = self.calendar.selectedDate()
-        self.selected_date_label.setText(_calendar_date_format(selected))
-
-    def _toggle_expanded(self) -> None:
-        self._expanded = not self._expanded
-        target = self._content_target_height() if self._expanded else 0
-        self.content_animation.stop()
-        self.content.setMinimumHeight(0)
-        self.content_animation.setStartValue(self.content.maximumHeight())
-        self.content_animation.setEndValue(target)
-        self.content_animation.start()
-        self._apply_header_density(compact=not self._expanded)
-        self.toggle_btn.setText("Collapse" if self._expanded else "Expand")
-
-    def _apply_header_density(self, compact: bool) -> None:
-        if compact:
-            self._root_layout.setSpacing(6)
-            self._header_layout.setContentsMargins(10, 4, 10, 4)
-            self._header_layout.setSpacing(6)
-            self._header_left_layout.setSpacing(0)
-            self._chip_row_layout.setSpacing(4)
-            self.selected_date_label.setVisible(False)
-            self._header.setMinimumHeight(self._header_fixed_height)
-            self._header.setMaximumHeight(self._header_fixed_height)
-            control_height = 26
-            for chip in (self.today_chip, self.pending_chip, self.done_chip, self.error_chip):
-                chip.setMinimumHeight(control_height)
-                chip.setMaximumHeight(control_height)
-            for btn in (self.template_btn, self.toggle_btn):
-                btn.setMinimumHeight(control_height)
-                btn.setMaximumHeight(control_height)
-            return
-
-        self._root_layout.setSpacing(8)
-        self._header_layout.setContentsMargins(10, 4, 10, 4)
-        self._header_layout.setSpacing(8)
-        self._header_left_layout.setSpacing(0)
-        self._chip_row_layout.setSpacing(6)
-        self.selected_date_label.setVisible(False)
-        self._header.setMinimumHeight(self._header_fixed_height)
-        self._header.setMaximumHeight(self._header_fixed_height)
-        chip_height = 26
-        button_height = 26
-        for chip in (self.today_chip, self.pending_chip, self.done_chip, self.error_chip):
-            chip.setMinimumHeight(chip_height)
-            chip.setMaximumHeight(chip_height)
-        for btn in (self.template_btn, self.toggle_btn):
-            btn.setMinimumHeight(button_height)
-            btn.setMaximumHeight(button_height)
-
-    def _content_target_height(self) -> int:
-        hint = self.content.sizeHint().height()
-        self._content_height_hint = max(self._content_height_hint, hint, 300)
-        return self._content_height_hint
-
-    def _on_calendar_changed(self) -> None:
-        self._ensure_date_loaded(self.calendar.selectedDate())
-        self._refresh_selected_date_label()
-        self._render_table()
-
-    def _open_template_dialog(self) -> None:
-        dialog = ReloadOfferTemplateDialog(self.db.path.parent, self)
-        if dialog.exec() != QDialog.DialogCode.Accepted:
-            return
-        self.refresh_panel()
-
-    def _ensure_date_loaded(self, selected: QDate) -> None:
-        chosen = date(selected.year(), selected.month(), selected.day())
-        window_start = _iso_date(chosen - timedelta(days=60))
-        window_end = _iso_date(chosen + timedelta(days=120))
-        self.db.refresh_reload_offer_instances(window_start, window_end)
-
-    def _selected_date_iso(self) -> str:
-        selected = self.calendar.selectedDate()
-        return _iso_date(date(selected.year(), selected.month(), selected.day()))
-
-    def _render_table(self) -> None:
-        self._render_guard = True
-        try:
-            records = self.db.fetch_reload_offer_instances_for_date(self._selected_date_iso())
-            self.table.clearContents()
-            self.table.setRowCount(len(records))
-            self._records = records
-
-            for row, record in enumerate(records):
-                values = [
-                    record.get("status", "Not started"),
-                    record.get("bookie", ""),
-                    record.get("promo_name", ""),
-                    record.get("deposit_amount", ""),
-                    record.get("bet_amount", ""),
-                    record.get("bet_type", ""),
-                    record.get("bonus_amount", ""),
-                    record.get("bonus_type", ""),
-                    record.get("notes", ""),
-                ]
-                for column, value in enumerate(values):
-                    item = QTableWidgetItem(value)
-                    item.setFlags(Qt.ItemFlag.ItemIsSelectable | Qt.ItemFlag.ItemIsEnabled)
-                    if column in {3, 4, 6}:
-                        item.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-                    self.table.setItem(row, column, item)
-
-            if records:
-                self.empty_label.setText("")
-            else:
-                self.empty_label.setText("No reload offers for this date.")
-        finally:
-            self._render_guard = False
-
-    def _refresh_summary(self) -> None:
-        today_records = self.db.fetch_reload_offer_instances_for_date(_iso_date(_today()))
-        total = len(today_records)
-        done = sum(1 for record in today_records if record.get("status") == _status_label("Done"))
-        error = sum(1 for record in today_records if record.get("status") == _status_label("Error"))
-        pending = total - done - error
-
-        set_metric_chip(self.today_chip, "Today", total, "neutral")
-        set_metric_chip(self.pending_chip, "Pending", pending, "warning" if pending else "neutral")
-        set_metric_chip(self.done_chip, "Done", done, "success" if done else "neutral")
-        set_metric_chip(self.error_chip, "Error", error, "error" if error else "neutral")
-
-    def _activate_selected_row(self, row: int, _column: int) -> None:
-        if self._render_guard or not 0 <= row < len(getattr(self, "_records", [])):
-            return
-        instance = self._records[row]
-        record_id = self.activate_instance(instance)
-        if not record_id:
-            return
-        self.db.set_reload_offer_instance_betting_record(instance.get("id", ""), record_id)
-        self.refresh_panel()
-
-
-__all__ = ["ReloadOffersPanel", "ReloadOfferTemplateDialog"]
+__all__ = [
+    "ReloadBettingOffersPanel",
+    "ReloadBettingOfferTemplateDialog",
+]
