@@ -72,6 +72,8 @@ class MainWindow(QMainWindow):
         self.reload_panel_stack.addWidget(self.reload_panel_placeholder)
         self.reload_panel_stack.addWidget(self.reload_betting_offers_panel)
         self.reload_panel_stack.addWidget(self.reload_casino_offers_panel)
+        self.reload_panel_placeholder.setMinimumHeight(0)
+        self.reload_panel_placeholder.setMaximumHeight(0)
 
         corner_widget = QWidget(tabs)
         corner_layout = QHBoxLayout(corner_widget)
@@ -161,13 +163,17 @@ class MainWindow(QMainWindow):
         if current_tab is self.betting_tab:
             self.reload_panel_stack.setVisible(True)
             self.reload_panel_stack.setCurrentWidget(self.reload_betting_offers_panel)
+            self.reload_betting_offers_panel._sync_layout_height()
             return
         if current_tab is self.casino_tab:
             self.reload_panel_stack.setVisible(True)
             self.reload_panel_stack.setCurrentWidget(self.reload_casino_offers_panel)
+            self.reload_casino_offers_panel._sync_layout_height()
             return
 
         self.reload_panel_stack.setCurrentWidget(self.reload_panel_placeholder)
+        self.reload_panel_stack.setMinimumHeight(0)
+        self.reload_panel_stack.setMaximumHeight(0)
         self.reload_panel_stack.setVisible(False)
 
     def _activate_reload_betting_offer_instance(self, instance: dict[str, str]) -> str | None:

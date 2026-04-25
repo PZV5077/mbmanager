@@ -4,7 +4,7 @@ from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Callable
 
-from PySide6.QtCore import QEasingCurve, QDate, QPropertyAnimation, Qt
+from PySide6.QtCore import QEasingCurve, QDate, QPropertyAnimation, QSize, Qt
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QCalendarWidget,
@@ -50,6 +50,10 @@ class ReloadOffersPanelBase(QWidget):
         self._expanded = True
         self._render_guard = False
         self._content_height_hint = 360
+        self._panel_width_hint = 0
+        self._collapsed_height_hint = 0
+        self._expanded_height_hint = 0
+        self._current_panel_height = 0
         self._records: list[dict[str, str]] = []
 
         self._build_ui()
@@ -178,14 +182,19 @@ class ReloadOffersPanelBase(QWidget):
         root.addWidget(self.content)
 
         self.content_animation = QPropertyAnimation(self.content, b"maximumHeight", self)
-        self.content_animation.setDuration(180)
-        self.content_animation.setEasingCurve(QEasingCurve.Type.OutCubic)
+        self.content_animation.setDuration(220)
+        self.content_animation.setEasingCurve(QEasingCurve.Type.InOutCubic)
+        self.content_animation.valueChanged.connect(self._sync_layout_height)
+        self.content_animation.finished.connect(self._finalize_layout_height)
         base_header_height = max(72, self._header.sizeHint().height())
         self._header_fixed_height = max(40, int(base_header_height * 0.5))
         self._header.setMinimumHeight(self._header_fixed_height)
         self._header.setMaximumHeight(self._header_fixed_height)
         self._apply_header_density(compact=False)
         self.content.setMaximumHeight(self._content_height_hint)
+        self._panel_width_hint = max(self._header.sizeHint().width(), self.content.sizeHint().width())
+        self._recalculate_panel_heights()
+        self._sync_layout_height()
 
     def _apply_header_button_widths(self) -> None:
         template_metrics = self.template_btn.fontMetrics()
@@ -203,6 +212,9 @@ class ReloadOffersPanelBase(QWidget):
         self._refresh_selected_date_label()
         self._render_table()
         self._refresh_summary()
+        self._recalculate_panel_heights()
+        self._current_panel_height = self._expanded_height_hint if self._expanded else self._collapsed_height_hint
+        self.updateGeometry()
 
     def _refresh_selected_date_label(self) -> None:
         selected = self.calendar.selectedDate()
@@ -218,6 +230,51 @@ class ReloadOffersPanelBase(QWidget):
         self.content_animation.start()
         self._apply_header_density(compact=not self._expanded)
         self.toggle_btn.setText("Collapse" if self._expanded else "Expand")
+        self._sync_layout_height()
+
+    def sizeHint(self) -> QSize:
+        return self._panel_size_hint()
+
+    def minimumSizeHint(self) -> QSize:
+        return self._panel_size_hint()
+
+    def _panel_size_hint(self) -> QSize:
+        return QSize(self._panel_width_hint, self._current_panel_height)
+
+    def _recalculate_panel_heights(self) -> None:
+        margins = self._root_layout.contentsMargins()
+        spacing = self._root_layout.spacing()
+        header_height = self._header.sizeHint().height()
+        content_height = self.content.sizeHint().height()
+        self._collapsed_height_hint = margins.top() + header_height + margins.bottom()
+        self._expanded_height_hint = self._collapsed_height_hint + spacing + content_height
+
+    def _sync_layout_height(self, *_args: object) -> None:
+        animated_content_height = int(self.content.maximumHeight())
+        self._current_panel_height = self._collapsed_height_hint + (self._root_layout.spacing() if animated_content_height > 0 else 0) + animated_content_height
+        self.setMinimumHeight(self._current_panel_height)
+        self.setMaximumHeight(self._current_panel_height)
+        self.updateGeometry()
+        parent = self.parentWidget()
+        if parent is not None:
+            current_widget = getattr(parent, "currentWidget", lambda: None)()
+            if current_widget is self:
+                parent.setMinimumHeight(self._current_panel_height)
+                parent.setMaximumHeight(self._current_panel_height)
+            parent.updateGeometry()
+
+    def _finalize_layout_height(self) -> None:
+        self._current_panel_height = self._expanded_height_hint if self._expanded else self._collapsed_height_hint
+        self.setMinimumHeight(self._current_panel_height)
+        self.setMaximumHeight(self._current_panel_height)
+        self.updateGeometry()
+        parent = self.parentWidget()
+        if parent is not None:
+            current_widget = getattr(parent, "currentWidget", lambda: None)()
+            if current_widget is self:
+                parent.setMinimumHeight(self._current_panel_height)
+                parent.setMaximumHeight(self._current_panel_height)
+            parent.updateGeometry()
 
     def _apply_header_density(self, compact: bool) -> None:
         if compact:
@@ -256,7 +313,8 @@ class ReloadOffersPanelBase(QWidget):
             btn.setMaximumHeight(button_height)
 
     def _content_target_height(self) -> int:
-        return self._content_height_hint
+        self._recalculate_panel_heights()
+        return max(0, self._expanded_height_hint - self._collapsed_height_hint - self._root_layout.spacing())
 
     def _on_calendar_changed(self) -> None:
         self._ensure_date_loaded(self.calendar.selectedDate())

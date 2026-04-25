@@ -228,20 +228,60 @@ class BettingTab(QWidget):
         self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.table.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
         self.table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        self.table.setHorizontalScrollMode(QAbstractItemView.ScrollMode.ScrollPerPixel)
+        self.table.setVerticalScrollMode(QAbstractItemView.ScrollMode.ScrollPerPixel)
         self.table.horizontalHeader().setSectionsMovable(False)
         self.table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
         self.table.horizontalHeader().sectionClicked.connect(self.sort_by_column)
         self.table.horizontalHeader().sectionResized.connect(self._on_section_resized)
         self.table.itemSelectionChanged.connect(self._remember_active_selection)
+        self.table.verticalScrollBar().valueChanged.connect(self._sync_frozen_vertical_scroll)
+        self.table.verticalHeader().sectionResized.connect(self._sync_frozen_row_height)
+
+        self.frozen_status_table = QTableWidget(self)
+        self.frozen_status_table.setObjectName("ledgerTable")
+        self.frozen_status_table.setColumnCount(1)
+        self.frozen_status_table.setHorizontalHeaderLabels([BETTING_HEADERS[0]])
+        self.frozen_status_table.verticalHeader().setVisible(False)
+        self.frozen_status_table.verticalHeader().setDefaultSectionSize(44)
+        self.frozen_status_table.verticalHeader().setMinimumSectionSize(32)
+        self.frozen_status_table.setAlternatingRowColors(True)
+        self.frozen_status_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        self.frozen_status_table.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
+        self.frozen_status_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        self.frozen_status_table.setVerticalScrollMode(QAbstractItemView.ScrollMode.ScrollPerPixel)
+        self.frozen_status_table.horizontalHeader().setSectionsMovable(False)
+        self.frozen_status_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
+        self.frozen_status_table.horizontalHeader().sectionClicked.connect(lambda _index: self.sort_by_column(0))
+        self.frozen_status_table.horizontalHeader().sectionResized.connect(self._on_frozen_status_resized)
+        self.frozen_status_table.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.frozen_status_table.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.frozen_status_table.verticalScrollBar().valueChanged.connect(self._sync_main_vertical_scroll)
+        self.frozen_status_table.cellClicked.connect(self._on_frozen_status_clicked)
+        self.frozen_status_table.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+
+        self.table.setColumnHidden(0, True)
+        self.table.setColumnWidth(0, self.col_widths[0])
+        self.table.horizontalScrollBar().setSingleStep(24)
+        self.table.verticalScrollBar().setSingleStep(24)
+        self.frozen_status_table.verticalScrollBar().setSingleStep(24)
+
+        self.table_wrap = QWidget(self)
+        table_layout = QHBoxLayout(self.table_wrap)
+        table_layout.setContentsMargins(0, 0, 0, 0)
+        table_layout.setSpacing(0)
+        table_layout.addWidget(self.frozen_status_table, 0)
+        table_layout.addWidget(self.table, 1)
 
         root = QVBoxLayout(self)
         root.addWidget(header)
         root.addWidget(controls)
         root.addWidget(actions)
-        root.addWidget(self.table, 1)
+        root.addWidget(self.table_wrap, 1)
 
         self._refresh_header_metrics([])
         self._apply_compact_top_bars()
+        self._apply_status_column_width(self.col_widths[0] if self.col_widths else 120)
 
         QShortcut(QKeySequence.StandardKey.Undo, self, activated=self.undo_last_change)
         QShortcut(QKeySequence.StandardKey.Redo, self, activated=self.redo_last_change)
@@ -479,28 +519,36 @@ class BettingTab(QWidget):
         h_scroll = self.table.horizontalScrollBar().value()
         v_scroll = self.table.verticalScrollBar().value()
         self.table.setUpdatesEnabled(False)
+        self.frozen_status_table.setUpdatesEnabled(False)
         self.table.clearContents()
+        self.frozen_status_table.clearContents()
 
         self.row_to_record_id.clear()
         self.record_by_id.clear()
         self.table.setRowCount(len(records))
+        self.frozen_status_table.setRowCount(len(records))
 
         for row, record in enumerate(records):
             self.row_to_record_id[row] = record["id"]
             self.record_by_id[record["id"]] = record
             self._render_row(row, record)
+            self.frozen_status_table.setItem(row, 0, self._status_item(record.get("status", "NotStarted")))
+            self.frozen_status_table.setRowHeight(row, self.table.rowHeight(row))
 
         self._applying_col_widths = True
         try:
             for index, width in enumerate(self.col_widths):
                 self.table.setColumnWidth(index, width)
+            self._apply_status_column_width(self.col_widths[0])
         finally:
             self._applying_col_widths = False
 
         self.table.horizontalHeader().setStretchLastSection(False)
         self.table.setUpdatesEnabled(True)
+        self.frozen_status_table.setUpdatesEnabled(True)
         self._restore_selection(records)
         self._restore_scroll_position(h_scroll, v_scroll)
+        self._sync_frozen_vertical_scroll(v_scroll)
         self._refresh_header_metrics(records)
 
     def _restore_scroll_position(self, horizontal: int, vertical: int) -> None:
@@ -511,12 +559,7 @@ class BettingTab(QWidget):
 
     def _render_row(self, row: int, record: dict[str, str]) -> None:
         status = record.get("status", "NotStarted")
-        status_item = QTableWidgetItem(status)
-        status_item.setFlags(Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable)
-        status_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
-        status_item.setBackground(QBrush(QColor(status_color(status))))
-        status_item.setForeground(QBrush(QColor(status_text_color(status))))
-        self.table.setItem(row, 0, status_item)
+        self.table.setItem(row, 0, self._status_item(status))
 
         self.table.setCellWidget(row, 1, self._datetime_widget(record, row, "start_at"))
         self.table.setCellWidget(row, 2, self._bookie_widget(record, row))
@@ -719,7 +762,7 @@ class BettingTab(QWidget):
         if target_row is None:
             return
 
-        self.table.setCurrentCell(target_row, 0)
+        self.table.setCurrentCell(target_row, 1)
         self.table.selectRow(target_row)
 
     def _remember_active_selection(self) -> None:
@@ -727,7 +770,61 @@ class BettingTab(QWidget):
         record_id = self.row_to_record_id.get(current_row)
         if record_id:
             self.active_record_id = record_id
+        self._sync_frozen_selection()
         self._refresh_header_metrics()
+
+    def _status_item(self, status: str) -> QTableWidgetItem:
+        item = QTableWidgetItem(status)
+        item.setFlags(Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable)
+        item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+        item.setBackground(QBrush(QColor(status_color(status))))
+        item.setForeground(QBrush(QColor(status_text_color(status))))
+        return item
+
+    def _sync_frozen_selection(self) -> None:
+        row = self.table.currentRow()
+        self.frozen_status_table.blockSignals(True)
+        self.frozen_status_table.clearSelection()
+        if row >= 0 and row < self.frozen_status_table.rowCount():
+            self.frozen_status_table.setCurrentCell(row, 0)
+            self.frozen_status_table.selectRow(row)
+        self.frozen_status_table.blockSignals(False)
+
+    def _on_frozen_status_clicked(self, row: int, _column: int) -> None:
+        if not 0 <= row < self.table.rowCount():
+            return
+        self.table.setCurrentCell(row, 1)
+        self.table.selectRow(row)
+
+    def _sync_frozen_vertical_scroll(self, value: int) -> None:
+        bar = self.frozen_status_table.verticalScrollBar()
+        if bar.value() != value:
+            bar.setValue(value)
+
+    def _sync_main_vertical_scroll(self, value: int) -> None:
+        bar = self.table.verticalScrollBar()
+        if bar.value() != value:
+            bar.setValue(value)
+
+    def _sync_frozen_row_height(self, row: int, _old_size: int, new_size: int) -> None:
+        if 0 <= row < self.frozen_status_table.rowCount():
+            self.frozen_status_table.setRowHeight(row, new_size)
+
+    def _apply_status_column_width(self, width: int) -> None:
+        adjusted_width = max(80, width)
+        self.col_widths[0] = adjusted_width
+        self.table.setColumnWidth(0, adjusted_width)
+        self.frozen_status_table.setColumnWidth(0, adjusted_width)
+        self.frozen_status_table.setFixedWidth(adjusted_width + self.frozen_status_table.frameWidth() * 2)
+
+    def _on_frozen_status_resized(self, index: int, _old_size: int, new_size: int) -> None:
+        if index != 0 or self._applying_col_widths:
+            return
+        self._apply_status_column_width(new_size)
+        self.settings_timer.start()
+
+    def resizeEvent(self, event) -> None:
+        super().resizeEvent(event)
 
     def _refresh_header_metrics(self, records: list[dict[str, str]] | None = None) -> None:
         visible_records = records if records is not None else self._last_visible_records
@@ -751,6 +848,8 @@ class BettingTab(QWidget):
         if new_size <= 0:
             return
         self.col_widths[index] = new_size
+        if index == 0:
+            self._apply_status_column_width(new_size)
         self.settings_timer.start()
 
     def _save_column_widths(self) -> None:
