@@ -370,6 +370,7 @@ class ReloadBettingOfferTemplateDialog(QDialog):
         row = self.template_list.currentRow()
         if not 0 <= row < len(self.templates):
             return
+        previous_start_at = (self.templates[row].get("start_at") or "").strip()
         start_at_text = self.start_at_widget.text().strip()
         self.templates[row] = {
             "id": self.templates[row].get("id") or new_id(),
@@ -387,7 +388,7 @@ class ReloadBettingOfferTemplateDialog(QDialog):
             "bonus_type": self.bonus_type_combo.currentText().strip(),
             "notes": self.notes_edit.text().strip(),
         }
-        if start_at_text:
+        if start_at_text and start_at_text != previous_start_at:
             self.templates[row]["repeat_weekday"] = str(_weekday_from_date_text(start_at_text))
             self.templates[row]["repeat_monthday"] = str(_monthday_from_date_text(start_at_text))
             self.repeat_weekday_combo.setCurrentIndex(int(self.templates[row]["repeat_weekday"]))
