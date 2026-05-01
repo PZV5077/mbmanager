@@ -657,8 +657,16 @@ class CasinoTab(QWidget):
         combo = QComboBox(self.table)
         combo.setEditable(True)
         combo.setProperty("role", "cellEditor")
-        combo.addItems(self._bookie_options())
-        combo.setCurrentText(rec.get("bookie", ""))
+        current_bookie = rec.get("bookie", "")
+        options = self._bookie_options()
+        if current_bookie and current_bookie not in options:
+            options = [current_bookie, *options]
+        combo.addItems(options)
+        match_index = combo.findText(current_bookie)
+        if match_index >= 0:
+            combo.setCurrentIndex(match_index)
+        elif combo.lineEdit() is not None:
+            combo.lineEdit().setText(current_bookie)
         self._normalize_combo_popup(combo)
         if combo.lineEdit() is not None:
             combo.lineEdit().setProperty("role", "cellEditor")
