@@ -65,6 +65,10 @@ class BettingTab(QWidget):
 
         self.sort_field = "start_at"
         self.sort_ascending = False
+        saved_sort_field, saved_sort_ascending = self.ui_settings.get_table_sort("betting_v2", self.sort_field, self.sort_ascending)
+        if saved_sort_field in BETTING_SORT_COLUMNS.values():
+            self.sort_field = saved_sort_field
+            self.sort_ascending = saved_sort_ascending
         self.active_record_id: str | None = None
         self.undo_stack: list[tuple[list[dict[str, str]], str | None]] = []
         self.redo_stack: list[tuple[list[dict[str, str]], str | None]] = []
@@ -75,6 +79,8 @@ class BettingTab(QWidget):
         self._startup_focus_pending = True
         self._applying_col_widths = False
         self._last_visible_records: list[dict[str, str]] = []
+        self.show_qbet_columns = True
+        self.show_bbet_columns = True
         self.col_widths = self.ui_settings.get_column_widths("betting_v2", BETTING_COL_WIDTHS, len(BETTING_HEADERS))
 
         self.save_timer = QTimer(self)
@@ -210,8 +216,20 @@ class BettingTab(QWidget):
         self.view_hint_label = QLabel("", actions)
         self.view_hint_label.setProperty("role", "metaInfo")
 
+        self.toggle_qbet_btn = QPushButton(actions)
+        self.toggle_qbet_btn.setProperty("variant", "ghost")
+        self.toggle_qbet_btn.clicked.connect(self._toggle_qbet_columns)
+
+        self.toggle_bbet_btn = QPushButton(actions)
+        self.toggle_bbet_btn.setProperty("variant", "ghost")
+        self.toggle_bbet_btn.clicked.connect(self._toggle_bbet_columns)
+        self._sync_group_toggle_buttons()
+
         actions_layout.addWidget(actions_label)
         actions_layout.addWidget(self.view_hint_label)
+        actions_layout.addStretch(1)
+        actions_layout.addWidget(self.toggle_qbet_btn)
+        actions_layout.addWidget(self.toggle_bbet_btn)
         actions_layout.addStretch(1)
         actions_layout.addWidget(self.add_btn)
         actions_layout.addWidget(self.copy_btn)
@@ -324,6 +342,8 @@ class BettingTab(QWidget):
             self.clear_filters_btn,
             self.undo_btn,
             self.redo_btn,
+            self.toggle_qbet_btn,
+            self.toggle_bbet_btn,
             self.add_btn,
             self.copy_btn,
             self.delete_btn,
@@ -511,6 +531,7 @@ class BettingTab(QWidget):
         else:
             self.sort_field = field
             self.sort_ascending = True
+        self.ui_settings.set_table_sort("betting_v2", self.sort_field, self.sort_ascending)
         self.render_table()
 
     def render_table(self) -> None:
@@ -544,6 +565,7 @@ class BettingTab(QWidget):
             self._applying_col_widths = False
 
         self.table.horizontalHeader().setStretchLastSection(False)
+        self._apply_group_column_visibility()
         self.table.setUpdatesEnabled(True)
         self.frozen_status_table.setUpdatesEnabled(True)
         self._restore_selection(records)
@@ -565,25 +587,47 @@ class BettingTab(QWidget):
         self.table.setCellWidget(row, 2, self._bookie_widget(record, row))
         self.table.setCellWidget(row, 3, self._line_widget(record, row, "promo_name"))
         self.table.setCellWidget(row, 4, self._line_widget(record, row, "deposit_amount", numeric=True))
-        self.table.setCellWidget(row, 5, self._datetime_widget(record, row, "q_result_at"))
-        self.table.setCellWidget(row, 6, self._line_widget(record, row, "q_event"))
-        self.table.setCellWidget(row, 7, self._combo_widget(record, row, "q_type", BETTING_Q_TYPES))
-        self.table.setCellWidget(row, 8, self._line_widget(record, row, "q_amount", numeric=True))
-        self.table.setCellWidget(row, 9, self._line_widget(record, row, "q_target", is_link=True))
-        self.table.setCellWidget(row, 10, self._combo_widget(record, row, "q_exchange", BETTING_Q_EXCHANGES))
-        self.table.setCellWidget(row, 11, self._check_widget(record, row, "q_is_placed"))
-        self.table.setCellWidget(row, 12, self._check_widget(record, row, "q_is_completed"))
-        self.table.setCellWidget(row, 13, self._datetime_widget(record, row, "b_result_at"))
-        self.table.setCellWidget(row, 14, self._line_widget(record, row, "b_event"))
-        self.table.setCellWidget(row, 15, self._combo_widget(record, row, "b_type", BETTING_B_TYPES))
-        self.table.setCellWidget(row, 16, self._line_widget(record, row, "b_amount", numeric=True))
-        self.table.setCellWidget(row, 17, self._line_widget(record, row, "b_target", is_link=True))
-        self.table.setCellWidget(row, 18, self._combo_widget(record, row, "b_exchange", BETTING_B_EXCHANGES))
-        self.table.setCellWidget(row, 19, self._check_widget(record, row, "b_is_placed"))
-        self.table.setCellWidget(row, 20, self._check_widget(record, row, "b_is_completed"))
+        if self.show_qbet_columns:
+            self.table.setCellWidget(row, 5, self._datetime_widget(record, row, "q_result_at"))
+            self.table.setCellWidget(row, 6, self._line_widget(record, row, "q_event"))
+            self.table.setCellWidget(row, 7, self._combo_widget(record, row, "q_type", BETTING_Q_TYPES))
+            self.table.setCellWidget(row, 8, self._line_widget(record, row, "q_amount", numeric=True))
+            self.table.setCellWidget(row, 9, self._line_widget(record, row, "q_target", is_link=True))
+            self.table.setCellWidget(row, 10, self._combo_widget(record, row, "q_exchange", BETTING_Q_EXCHANGES))
+            self.table.setCellWidget(row, 11, self._check_widget(record, row, "q_is_placed"))
+            self.table.setCellWidget(row, 12, self._check_widget(record, row, "q_is_completed"))
+        if self.show_bbet_columns:
+            self.table.setCellWidget(row, 13, self._datetime_widget(record, row, "b_result_at"))
+            self.table.setCellWidget(row, 14, self._line_widget(record, row, "b_event"))
+            self.table.setCellWidget(row, 15, self._combo_widget(record, row, "b_type", BETTING_B_TYPES))
+            self.table.setCellWidget(row, 16, self._line_widget(record, row, "b_amount", numeric=True))
+            self.table.setCellWidget(row, 17, self._line_widget(record, row, "b_target", is_link=True))
+            self.table.setCellWidget(row, 18, self._combo_widget(record, row, "b_exchange", BETTING_B_EXCHANGES))
+            self.table.setCellWidget(row, 19, self._check_widget(record, row, "b_is_placed"))
+            self.table.setCellWidget(row, 20, self._check_widget(record, row, "b_is_completed"))
         self.table.setCellWidget(row, 21, self._line_widget(record, row, "profit", profit=True))
         self.table.setCellWidget(row, 22, self._combo_widget(record, row, "bank", BETTING_BANK_VALUES))
         self.table.setCellWidget(row, 23, self._line_widget(record, row, "notes"))
+
+    def _toggle_qbet_columns(self) -> None:
+        self.show_qbet_columns = not self.show_qbet_columns
+        self._sync_group_toggle_buttons()
+        self.render_table()
+
+    def _toggle_bbet_columns(self) -> None:
+        self.show_bbet_columns = not self.show_bbet_columns
+        self._sync_group_toggle_buttons()
+        self.render_table()
+
+    def _sync_group_toggle_buttons(self) -> None:
+        self.toggle_qbet_btn.setText("Hide Qbet" if self.show_qbet_columns else "Show Qbet")
+        self.toggle_bbet_btn.setText("Hide Bbet" if self.show_bbet_columns else "Show Bbet")
+
+    def _apply_group_column_visibility(self) -> None:
+        for column in range(5, 13):
+            self.table.setColumnHidden(column, not self.show_qbet_columns)
+        for column in range(13, 21):
+            self.table.setColumnHidden(column, not self.show_bbet_columns)
 
     def _bookie_widget(self, record: dict[str, str], row: int) -> QWidget:
         combo = QComboBox(self.table)

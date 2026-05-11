@@ -85,3 +85,36 @@ class UiSettingsStore:
         data = self.load()
         data["theme_mode"] = "dark" if mode == "dark" else "light"
         self.save(data)
+
+    def get_table_sort(self, tab_key: str, default_field: str, default_ascending: bool) -> tuple[str, bool]:
+        data = self.load()
+        tabs = data.get("tabs")
+        if not isinstance(tabs, dict):
+            return default_field, default_ascending
+        tab_data = tabs.get(tab_key)
+        if not isinstance(tab_data, dict):
+            return default_field, default_ascending
+
+        field = tab_data.get("sort_field")
+        ascending = tab_data.get("sort_ascending")
+        if not isinstance(field, str) or not field:
+            field = default_field
+        if not isinstance(ascending, bool):
+            ascending = default_ascending
+        return field, ascending
+
+    def set_table_sort(self, tab_key: str, sort_field: str, sort_ascending: bool) -> None:
+        data = self.load()
+        tabs = data.get("tabs")
+        if not isinstance(tabs, dict):
+            tabs = {}
+            data["tabs"] = tabs
+
+        tab_data = tabs.get(tab_key)
+        if not isinstance(tab_data, dict):
+            tab_data = {}
+            tabs[tab_key] = tab_data
+
+        tab_data["sort_field"] = sort_field
+        tab_data["sort_ascending"] = bool(sort_ascending)
+        self.save(data)

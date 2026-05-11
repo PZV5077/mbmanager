@@ -60,6 +60,10 @@ class CasinoTab(QWidget):
         self.active_record_id: str | None = None
         self.sort_field = "promo_start_date"
         self.sort_ascending = True
+        saved_sort_field, saved_sort_ascending = self.ui_settings.get_table_sort("casino", self.sort_field, self.sort_ascending)
+        if saved_sort_field in {"status", "bookie", "promo_start_date", "promo_name", "deposit_amount", "final_amount", "bank_status", "profit", "notes"}:
+            self.sort_field = saved_sort_field
+            self.sort_ascending = saved_sort_ascending
         self.undo_stack: list[tuple[list[dict[str, str]], str | None]] = []
         self.redo_stack: list[tuple[list[dict[str, str]], str | None]] = []
         self.row_to_record_id: dict[int, str] = {}
@@ -531,6 +535,7 @@ class CasinoTab(QWidget):
         else:
             self.sort_field = field
             self.sort_ascending = True
+        self.ui_settings.set_table_sort("casino", self.sort_field, self.sort_ascending)
         self.render_table()
 
     def render_table(self) -> None:

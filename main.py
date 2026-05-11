@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import sys
+from pathlib import Path
 
 from PySide6.QtCore import Qt
+from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import QApplication, QHBoxLayout, QMainWindow, QPushButton, QStackedWidget, QTabWidget, QVBoxLayout, QWidget
 
 from app.betting_tab import BettingTab
@@ -31,6 +33,9 @@ class MainWindow(QMainWindow):
         self.ui_settings = UiSettingsStore(self.data_dir)
         self.theme_mode = self.ui_settings.get_theme_mode("dark")
         self._build_workspace()
+
+    def apply_window_icon(self, icon: QIcon) -> None:
+        self.setWindowIcon(icon)
 
     def _build_workspace(self) -> None:
         old_central = self.centralWidget()
@@ -220,11 +225,28 @@ class MainWindow(QMainWindow):
 
 
 def main() -> int:
+    base_dir = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent))
+    icon_candidates = [
+        base_dir / "icon" / "io.github.PZV5077.mbmanager.png",
+        base_dir / "icon" / "mbmanager.png",
+        base_dir / "icon" / "icon.png",
+        base_dir / "icon" / "icon.svg",
+    ]
+
     app = QApplication(sys.argv)
+    for icon_path in icon_candidates:
+        if icon_path.is_file():
+            app_icon = QIcon(str(icon_path))
+            if not app_icon.isNull():
+                app.setWindowIcon(app_icon)
+                break
+
     settings_store = UiSettingsStore(get_data_dir())
     apply_galaxy_theme(app, settings_store.get_theme_mode("dark"))
 
     window = MainWindow()
+    if not app.windowIcon().isNull():
+        window.apply_window_icon(app.windowIcon())
     window.show()
     return app.exec()
 
