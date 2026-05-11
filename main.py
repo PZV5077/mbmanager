@@ -27,7 +27,7 @@ class MainWindow(QMainWindow):
             | Qt.WindowType.WindowMinMaxButtonsHint
             | Qt.WindowType.WindowCloseButtonHint
         )
-        self.setWindowTitle("Matched Betting Manager 2.0.1")
+        self.setWindowTitle("Matched Betting Manager 2.0.2")
         self.resize(1980, 900)
         self.data_dir = get_data_dir()
         self.ui_settings = UiSettingsStore(self.data_dir)

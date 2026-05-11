@@ -1,4 +1,4 @@
-# Matched Betting Manager v2.0.1
+# Matched Betting Manager v2.0.2
 
 PySide6 desktop app for matched betting records, now running on SQLite with a qt-material based theme system.
 

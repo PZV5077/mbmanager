@@ -26,7 +26,7 @@ class SettingsAboutTab(QWidget):
         layout.setContentsMargins(24, 24, 24, 24)
         layout.setSpacing(12)
 
-        title = QLabel("Matched Betting Manager v2.0.1", self)
+        title = QLabel("Matched Betting Manager v2.0.2", self)
         title.setProperty("role", "panelTitle")
 
         intro = QLabel(
